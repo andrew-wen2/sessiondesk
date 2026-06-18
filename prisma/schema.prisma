@@ -1,0 +1,74 @@
+// Session Desk data model. Two tables; Payment is a boolean on Session (YAGNI).
+// "Learned so far" is derived from session topics, never stored.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Student {
+  id            String    @id @default(cuid())
+  name           String
+  parentContact  String?
+  subject        String // e.g. "AIME · number theory"
+  level          String // calibration string fed to the generator; keep specific
+  rate           Int // default dollars per session
+  notes          String?
+  sessions       Session[]
+  createdAt      DateTime  @default(now())
+}
+
+// Read-only reference corpus of real past competition problems. Used to retrieve
+// same-difficulty "anchor" examples that calibrate generation. Not a user-facing
+// problem bank; never redistributed.
+model ReferenceProblem {
+  id        String   @id @default(cuid())
+  source    String // "AMC10" | "AMC12" | "AIME" | "Fma"
+  year      Int?
+  number    Int? // problem position → difficulty proxy
+  category  String? // "algebra" | "number_theory" | "geometry" | "combinatorics" | "mechanics"
+  statement String
+  answer    String?
+  solution  String?
+  createdAt DateTime @default(now())
+
+  // No @@unique on (source, year, number): years from 2000+ have AIME I and II,
+  // both numbered 1–15. Idempotency is via a deterministic primary id at ingest.
+  @@index([source, number])
+  @@index([category])
+}
+
+model Book {
+  id        String    @id @default(cuid())
+  title     String
+  author    String?
+  contents  String    @default("") // free-text TOC / chapter topics, fed to the generator
+  chapters  Json?     // structured outline [{number,title,sections:[{number,title,concepts}]}]; titles shown as a table, sections stored but not displayed
+  sessions  Session[]
+  createdAt DateTime  @default(now())
+}
+
+model Session {
+  id            String   @id @default(cuid())
+  student       Student  @relation(fields: [studentId], references: [id])
+  studentId     String
+  book          Book?    @relation(fields: [bookId], references: [id], onDelete: SetNull)
+  bookId        String?
+  start         DateTime
+  durationMin   Int      @default(60)
+  topic         String   @default("")
+  homework      String   @default("")
+  problems      Json?
+  amount        Int
+  paid          Boolean  @default(false)
+  googleEventId String?  @unique
+  createdAt     DateTime @default(now())
+
+  @@index([studentId])
+  @@index([start])
+  @@index([bookId])
+}
