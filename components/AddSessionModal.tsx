@@ -176,7 +176,7 @@ export default function AddSessionModal({
             )}
             {willCreate && (
               <p className="mt-1 text-xs text-gray-500">
-                New student — created on save. Set subject/level later in Students.
+                New student — created on save. Set the level later in Students.
               </p>
             )}
             {selected?.level && (

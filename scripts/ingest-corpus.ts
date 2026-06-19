@@ -4,7 +4,7 @@
 // Sources (HuggingFace datasets-server JSON API — no `datasets` lib needed):
 //   - AIME:  gneubig/aime-1983-2024        (933, Year + Problem Number + Answer)
 //   - AMC#:  AI-MO/aimo-validation-amc     (83, year/contest/number parsed from AoPS url)
-//   - AMC:   kaggle-aimo/amc_filtered      (1081, AMC_10/AMC_12 level only)
+//   - AMC:   kaggle-aimo/amc_filtered      (1081, year+number parsed from the `id` AoPS path)
 // F=ma is sourced separately (AAPT PDFs) — see scripts/README.md.
 //
 // Idempotent: each row gets a deterministic id, so re-running upserts in place.
@@ -116,17 +116,23 @@ async function adapterAMCNumbered(): Promise<Ref[]> {
 
 async function adapterAMCFiltered(): Promise<Ref[]> {
   const rows = await fetchAllRows("kaggle-aimo/amc_filtered");
+  // The dataset's `id` is the AoPS path, e.g. "2023_AMC_10A_Problems/Problem_1",
+  // which carries the year, contest (10/12), and problem number — the difficulty
+  // proxy retrieval bands on. Parse it (same shape adapterAMCNumbered parses from
+  // `url`); fall back to amc_level with no number only when it doesn't match.
+  const re = /(\d{4})_AMC_(\d{2})[AB]?_Problems\/Problem_(\d+)/;
   return rows
     .map((r): Ref | null => {
       const statement = str(r["task"]);
       if (!statement) return null;
-      const source = str(r["amc_level"]).replace(/_/g, ""); // "AMC_10" → "AMC10"
+      const m = re.exec(str(r["id"]));
+      const source = m ? `AMC${m[2]}` : str(r["amc_level"]).replace(/_/g, ""); // "AMC_10" → "AMC10"
       if (source !== "AMC10" && source !== "AMC12") return null;
       return {
         id: hid("amcfiltered", statement.slice(0, 200)),
         source,
-        year: null,
-        number: null,
+        year: m ? Number(m[1]) : null,
+        number: m ? Number(m[3]) : null,
         category: deriveCategory(statement),
         statement,
         answer: str(r["answer"]) || null,
@@ -170,8 +176,12 @@ async function main() {
   ]);
   console.log(`  AIME: ${aime.length}, AMC(numbered): ${amcNum.length}, AMC(level): ${amcLevel.length}`);
 
-  const all = [...aime, ...amcNum, ...amcLevel];
-  console.log(`Upserting ${all.length} reference problems…`);
+  const raw = [...aime, ...amcNum, ...amcLevel];
+  // Drop parse failures (null year/number → no difficulty-band signal for
+  // retrieval) and pre-2010 problems (stylistically dated). Keeps re-ingests
+  // consistent with scripts/cleanup-corpus.ts so old/broken rows never return.
+  const all = raw.filter((r) => r.year != null && r.number != null && r.year >= 2010);
+  console.log(`Upserting ${all.length} reference problems (dropped ${raw.length - all.length} null/pre-2010)…`);
   const n = await upsertAll(all);
 
   const bySource = await prisma.referenceProblem.groupBy({ by: ["source"], _count: true });

@@ -33,7 +33,6 @@ export default async function StudentPage({
   const student: StudentDetailData = {
     id: row.id,
     name: row.name,
-    subject: row.subject,
     level: row.level,
     rate: row.rate,
     notes: row.notes ?? "",
@@ -52,11 +51,6 @@ export default async function StudentPage({
 
       <div className="flex flex-wrap items-center gap-2">
         <StudentNameEditor id={student.id} initialName={student.name} />
-        {student.subject && (
-          <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
-            {student.subject}
-          </span>
-        )}
         <Link
           href={`/?student=${student.id}`}
           className="ml-auto text-sm text-blue-600 hover:underline"

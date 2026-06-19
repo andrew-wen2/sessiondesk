@@ -32,16 +32,22 @@ export async function getAnchors(opts: {
   const { competition, bandLow, bandHigh, category, count = 2 } = opts;
   const hasBand = bandLow != null && bandHigh != null;
   const bandWhere = hasBand ? { number: { gte: bandLow, lte: bandHigh } } : {};
-  // Anchor only on recent problems (post-2010). `gt` also drops null years,
-  // which is intended: an unknown year can't be guaranteed to be after 2010.
-  const recentWhere = { year: { gt: 2010 } };
+  // Prefer recent problems (2010 onward). `gte` also drops null years. This is a
+  // soft preference: the recent-only tiers run first, then the same tiers WITHOUT
+  // the recency filter as a fallback, so a source with sparse recent data is never
+  // starved of anchors entirely. (The corpus is cleaned to 2010+, so this now
+  // matches the kept range — see scripts/cleanup-corpus.ts.)
+  const recentWhere = { year: { gte: 2010 } };
 
-  // Most specific → least specific. Stop once we have `count`.
+  // Most specific → least specific; recent-preferred first, then any-year fallback.
+  // Stop once we have `count`.
   const tiers: Prisma.ReferenceProblemWhereInput[] = [];
-  if (hasBand && category) tiers.push({ source: competition, ...bandWhere, ...recentWhere, category });
-  if (hasBand) tiers.push({ source: competition, ...bandWhere, ...recentWhere });
-  if (category) tiers.push({ source: competition, ...recentWhere, category });
-  tiers.push({ source: competition, ...recentWhere });
+  for (const yearWhere of [recentWhere, {}]) {
+    if (hasBand && category) tiers.push({ source: competition, ...bandWhere, ...yearWhere, category });
+    if (hasBand) tiers.push({ source: competition, ...bandWhere, ...yearWhere });
+    if (category) tiers.push({ source: competition, ...yearWhere, category });
+    tiers.push({ source: competition, ...yearWhere });
+  }
 
   const seen = new Set<string>();
   const picked: Anchor[] = [];

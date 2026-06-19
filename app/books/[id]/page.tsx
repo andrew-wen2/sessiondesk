@@ -13,7 +13,13 @@ export default async function BookPage({
 }) {
   const { id } = await params;
 
-  const row = await prisma.book.findUniqueOrThrow({ where: { id } }).catch(() => null);
+  // contents is needed as a fallback for legacy books without structured chapters.
+  const row = await prisma.book
+    .findUniqueOrThrow({
+      where: { id },
+      select: { id: true, title: true, author: true, chapters: true, contents: true },
+    })
+    .catch(() => null);
   if (!row) notFound();
 
   const book: BookDetailData = {

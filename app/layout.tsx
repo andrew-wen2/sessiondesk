@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import "katex/dist/katex.min.css";
 import Nav from "@/components/Nav";
+import { isGcalConfigured } from "@/lib/gcal-token";
 
 export const metadata: Metadata = {
   title: "Session Desk",
@@ -16,7 +17,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="bg-gray-50 text-gray-900 antialiased">
-        <Nav />
+        <Nav gcalConnected={isGcalConfigured()} />
         <main className="mx-auto max-w-4xl px-4 py-8">{children}</main>
       </body>
     </html>

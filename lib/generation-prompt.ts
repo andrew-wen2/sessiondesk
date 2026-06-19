@@ -9,13 +9,14 @@ export type GenerationAnchor = {
 };
 
 export type GenerationInput = {
-  subject: string;
   level: string;
   topic: string;
   count: number;
   recentTopics: string[]; // last N session topics, most recent first
   book?: { title: string; contents: string }; // assigned book for this session, if any
   competition?: string; // "AMC10" | "AMC12" | "AIME" | "Fma" — selects the difficulty rubric
+  bandLow?: number | null; // target problem-number band (difficulty floor/ceiling)
+  bandHigh?: number | null;
   anchors?: GenerationAnchor[]; // real same-difficulty problems retrieved from the corpus
 };
 
@@ -38,8 +39,9 @@ function stripChoices(statement: string): string {
   return m && m.index != null ? statement.slice(0, m.index).replace(/\$\s*$/, "").trim() : statement;
 }
 
-export function buildPrompt(input: GenerationInput): string {
-  const { subject, level, topic, count, recentTopics, book, competition, anchors } = input;
+export function buildPrompt(input: GenerationInput): { system: string; user: string } {
+  const { level, topic, count, recentTopics, book, competition, bandLow, bandHigh, anchors } =
+    input;
 
   const historyBlock =
     recentTopics.length > 0
@@ -50,12 +52,17 @@ export function buildPrompt(input: GenerationInput): string {
 
   const bookBlock =
     book && book.contents.trim()
-      ? `\nAssigned book: ${book.title}. Today's topic above names chapters from this book. Use the chapter contents below to determine exactly what those chapters cover, and generate problems on those topics.\n\nBook contents:\n${book.contents}\n`
+      ? `\nAssigned book: ${book.title}. The session's topic (given below) names chapters from this book. Use the chapter contents here to determine exactly what those chapters cover, and generate problems on those topics.\n\nBook contents:\n${book.contents}\n`
       : book
-        ? `\nAssigned book: ${book.title}. Today's topic above may name chapters from it — generate problems matching those chapters.\n`
+        ? `\nAssigned book: ${book.title}. The session's topic (given below) may name chapters from it — generate problems matching those chapters.\n`
         : "";
 
   const rubric = competition && RUBRICS[competition] ? `\n${RUBRICS[competition]}\n` : "";
+
+  const bandBlock =
+    competition && bandLow != null && bandHigh != null
+      ? `\nTarget difficulty band: ${competition} problems ${bandLow}–${bandHigh}. Do NOT include any problem easier than #${bandLow}. Keep the set ordered easiest→hardest and raise the floor: the easiest problem is already a #${bandLow}-difficulty problem. All problems EXCEPT the final two climb from #${bandLow} toward #${bandHigh}. The FINAL TWO problems must EXCEED this band — each strictly harder than a #${bandHigh}, sitting at the very top of ${competition} difficulty and beyond, reaching toward the next competitive tier (e.g. olympiad-level for AIME, AIME-level for AMC). They remain free-response with the same answer format, fully solvable and fully solved. No openers below the band.\n`
+      : "";
 
   const anchorBlock =
     anchors && anchors.length > 0
@@ -69,18 +76,16 @@ export function buildPrompt(input: GenerationInput): string {
           .join("\n")}\n`
       : "";
 
-  return `You are generating competition math/physics practice problems for a one-on-one tutoring session.
-
-Student profile:
-- Subject: ${subject}
-- Level: ${level}
-- Today's topic: ${topic || "(not specified — use the subject and level to choose appropriate problems)"}
-
-${historyBlock}
-${bookBlock}${rubric}${anchorBlock}
-Generate exactly ${count} fully-solved problem(s) — not fewer. Requirements:
-- Difficulty must match the calibration and the reference problems above EXACTLY — not easier, not harder. This is the most important requirement.
-- Order the set from easiest to hardest, strictly increasing in difficulty across all ${count} problem(s). Every problem is a genuinely difficult competition-style problem — no warm-ups or routine one-idea problems. The back half especially must be hard enough that the student cannot solve them without help.
+  // The system block is intentionally count-free and depends only on
+  // per-student-stable inputs (rubric/band) plus the topic-trimmed book, so it
+  // stays byte-identical across the deficit-retry attempt and qualifies for
+  // prompt caching. All volatile, per-call content (student profile, history,
+  // randomized anchors, and the count) lives in the user block.
+  const system = `You are generating competition math/physics practice problems for a one-on-one tutoring session.
+${bookBlock}${rubric}${bandBlock}
+Each problem must meet ALL of these requirements:
+- Difficulty must match the calibration and the reference problems provided EXACTLY — not easier, not harder. This is the most important requirement.
+- Order the set from easiest to hardest, strictly increasing in difficulty across all the problems. Every problem is a genuinely difficult competition-style problem — no warm-ups or routine one-idea problems. The back half especially must be hard enough that the student cannot solve them without help.
 - You MUST fully solve every problem yourself. The "answer" field holds the REAL computed final answer and the "solution" field a REAL worked solution. NEVER output placeholders like "tbd", "TODO", "?", or "see solution". If you cannot solve a problem completely and correctly, discard it and produce a different problem at the SAME difficulty that you can fully solve — better a solid problem you can verify than a harder one you can't.
 - The "answer" field contains ONLY that final answer — no working, no restatement. For AIME-style it is a single integer 0–999; for AMC-style it is the exact computed value (integer, fraction, or exact expression); for F=ma/USAPhO/physics, a SYMBOLIC expression (variables only, e.g. $\frac{2mg}{k}$) — never an option letter or, for physics, a numeric value with units.
 - The "problem" field is the bare problem statement ONLY — no title, header, number, difficulty label, hint, explanation, or any extra formatting or commentary inside it.
@@ -92,12 +97,20 @@ Generate exactly ${count} fully-solved problem(s) — not fewer. Requirements:
 - NEVER present answer options or a multiple-choice list in the problem statement. AMC and F=ma are multiple-choice contests, but generate EVERY problem as FREE-RESPONSE: no "(A) … (E)" choices anywhere in the statement, and the "answer" field is the actual value/expression, never an option letter.
 - For F=ma/USAPhO/physics problems: free-response with a symbolic answer expressed in the given variables. Do not reduce to a number with units.
 - Each problem must be solvable with competition math/physics knowledge at the stated level.
-- The final five problems (or as many as exist if ${count} < 5) must each require at least three distinct reasoning steps, must NOT be solvable by a single standard formula or observation, and must reward deeper problem-solving and the synthesis of multiple ideas.
+- The final five problems (or as many as exist if fewer than five are requested) must each require at least three distinct reasoning steps, must NOT be solvable by a single standard formula or observation, and must reward deeper problem-solving and the synthesis of multiple ideas.
 - Solutions must be concise (3–8 lines). Show key steps only.
 - Math notation: use $...$ for inline LaTeX, $$...$$ for display LaTeX.
 - Build on recent topics rather than repeating them.
 
-Before emitting, verify: every problem is correct; the set is strictly increasing in difficulty; every solution is complete and mathematically sound; no two problems test a duplicate concept or are excessively similar. Fix any failure before returning.
+Before emitting, verify: every problem is correct; the set is strictly increasing in difficulty; every solution is complete and mathematically sound; no two problems test a duplicate concept or are excessively similar. Fix any failure before returning.`;
 
-Return all ${count} problem(s) through the emit_problems tool — one entry per problem.`;
+  const user = `Student profile:
+- Level: ${level}
+- Today's topic: ${topic || "(not specified — use the level to choose appropriate problems)"}
+
+${historyBlock}
+${anchorBlock}
+Generate exactly ${count} fully-solved problem(s) — not fewer, ordered easiest to hardest. Return all ${count} through the emit_problems tool — one entry per problem.`;
+
+  return { system, user };
 }

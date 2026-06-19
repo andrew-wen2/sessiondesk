@@ -17,9 +17,23 @@ export async function GET(request: Request) {
     const start = new Date(year, mon - 1, 1);
     const end = new Date(year, mon, 1);
 
+    // Calendar chips need id/start/paid/googleEventId and student name only.
+    // Omit problems (heavy Json) and homework — the calendar never renders them.
     const sessions = await prisma.session.findMany({
       where: { start: { gte: start, lt: end } },
-      include: { student: { select: { name: true } } },
+      select: {
+        id: true,
+        studentId: true,
+        start: true,
+        durationMin: true,
+        topic: true,
+        amount: true,
+        paid: true,
+        googleEventId: true,
+        bookId: true,
+        createdAt: true,
+        student: { select: { name: true } },
+      },
       orderBy: { start: "asc" },
     });
     return NextResponse.json(sessions);
@@ -54,6 +68,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Rate must be a non-negative number." }, { status: 400 });
     }
 
+    // Include student name for the GCal event title; only this field is used
+    // below. The client (AddSessionModal) reads only res.ok.
     const session = await prisma.session.create({
       data: {
         studentId,
@@ -63,7 +79,14 @@ export async function POST(request: Request) {
         topic,
         amount: Math.round(amount),
       },
-      include: { student: { select: { name: true, subject: true } } },
+      select: {
+        id: true,
+        start: true,
+        durationMin: true,
+        topic: true,
+        googleEventId: true,
+        student: { select: { name: true } },
+      },
     });
 
     // Mirror to Google Calendar after the response flushes — never block the

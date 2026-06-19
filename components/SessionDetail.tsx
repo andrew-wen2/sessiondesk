@@ -28,7 +28,6 @@ export type SessionDetailData = {
   student: {
     id: string;
     name: string;
-    subject: string;
     level: string;
   };
 };
@@ -460,7 +459,6 @@ export default function SessionDetail({
                 const ok = downloadProblemsPdf(problems, {
                   startIso,
                   studentName: session.student.name,
-                  subject: session.student.subject,
                   topic,
                 });
                 if (!ok) setDownloadError("Couldn't open the print window — allow pop-ups and retry.");

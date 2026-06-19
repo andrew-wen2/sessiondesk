@@ -19,8 +19,8 @@ export async function GET(
   }
 }
 
-// PATCH /api/students/[id] — name, level, rate, notes are editable. subject and
-// id are not patchable here.
+// PATCH /api/students/[id] — name, level, rate, notes are editable. id is not
+// patchable here.
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }

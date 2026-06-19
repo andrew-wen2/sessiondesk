@@ -36,7 +36,6 @@ export default async function SessionPage({
     student: {
       id: row.student.id,
       name: row.student.name,
-      subject: row.student.subject,
       level: row.student.level,
     },
   };

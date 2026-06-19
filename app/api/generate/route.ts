@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { buildPrompt } from "@/lib/generation-prompt";
 import { calibrationFor, categoryFor } from "@/lib/calibration";
 import { getAnchors } from "@/lib/corpus-retrieval";
+import { selectBookContents } from "@/lib/book-chapters";
 import type { Problem } from "@/lib/types";
 
 // POST /api/generate — server-only. Uses ANTHROPIC_API_KEY from env; never
@@ -16,6 +17,11 @@ import type { Problem } from "@/lib/types";
 // backslash-heavy and the model would frequently emit JSON that won't parse
 // (bad escapes, preamble, truncated strings). Forcing an emit_problems tool
 // call makes the SDK hand us already-valid structured data.
+
+// Generating 10 hard problems with full solutions is a large, slow streamed call;
+// up to two attempts (generate + regenerate the deficit). Needs a Vercel plan
+// whose function limit allows this (Hobby caps at 60s).
+export const maxDuration = 300;
 
 const PROBLEMS_TOOL: Anthropic.Tool = {
   name: "emit_problems",
@@ -64,19 +70,35 @@ function validateProblems(raw: unknown): Problem[] {
 
 // One tool-forced generation call → structurally-valid Problem[]. Throws
 // "truncated" / "no_tool" on infrastructure failures so the caller can map them.
+//
+// Hard problems with full worked solutions are long — 10 of them overran the old
+// non-streaming cap. We stream so we can allow a high max_tokens without hitting
+// the SDK's non-streaming HTTP timeout, and read the final message.
 async function callTool(
   client: Anthropic,
   model: string,
-  prompt: string,
+  system: string,
+  user: string,
   count: number
 ): Promise<Problem[]> {
-  const message = await client.messages.create({
+  const stream = client.messages.stream({
     model,
-    max_tokens: Math.min(16384, 1500 + count * 800),
+    max_tokens: Math.min(32000, 4000 + count * 1600),
+    // The stable instructions + rubric + (trimmed) book live in the system block
+    // and are cached; the deficit-retry and same-student repeat generations read
+    // them back at ~0.1× instead of full input price.
+    system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
     tools: [PROBLEMS_TOOL],
     tool_choice: { type: "tool", name: "emit_problems" },
-    messages: [{ role: "user", content: prompt }],
+    messages: [{ role: "user", content: user }],
   });
+  const message = await stream.finalMessage();
+  // Token-cost visibility: cache_read should be > 0 on the deficit retry and on
+  // same-student/topic repeats within the cache TTL (the cached system prefix).
+  const u = message.usage;
+  console.log(
+    `[/api/generate] usage input=${u.input_tokens} cache_write=${u.cache_creation_input_tokens ?? 0} cache_read=${u.cache_read_input_tokens ?? 0} output=${u.output_tokens}`
+  );
   if (message.stop_reason === "max_tokens") throw new Error("truncated");
   const toolUse = message.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
   if (!toolUse) throw new Error("no_tool");
@@ -164,38 +186,50 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing student or session." }, { status: 400 });
     }
 
-    const student = await prisma.student.findUniqueOrThrow({
-      where: { id: studentId },
-      select: { subject: true, level: true },
-    });
-
-    // recentTopics — last 5 non-empty topics for this student, most recent first.
-    const recent = await prisma.session.findMany({
-      where: { studentId, topic: { not: "" } },
-      orderBy: { start: "desc" },
-      take: 5,
-      select: { topic: true },
-    });
+    // Batch all DB reads into two parallel queries — student + session-with-book
+    // and recent topics — rather than three sequential round-trips.
+    const [student, sessionRow, recent] = await Promise.all([
+      prisma.student.findUniqueOrThrow({
+        where: { id: studentId },
+        select: { level: true },
+      }),
+      // The book assigned to this session (if any) — its chapter contents tell the
+      // model what the chapters named in `topic` actually cover.
+      prisma.session.findUnique({
+        where: { id: sessionId },
+        select: { book: { select: { title: true, contents: true, chapters: true } } },
+      }),
+      // Last 5 non-empty topics for this student, most recent first.
+      prisma.session.findMany({
+        where: { studentId, topic: { not: "" } },
+        orderBy: { start: "desc" },
+        take: 5,
+        select: { topic: true },
+      }),
+    ]);
     const recentTopics = recent.map((s) => s.topic);
 
-    // The book assigned to this session (if any) — its chapter contents tell the
-    // model what the chapters named in `topic` actually cover.
-    const sessionRow = await prisma.session.findUnique({
-      where: { id: sessionId },
-      select: { book: { select: { title: true, contents: true } } },
-    });
+    // Trim the book outline to the chapters/sections the topic names — the book
+    // is the dominant input cost. Falls back to the full outline when it can't
+    // safely narrow (empty topic, legacy book, or no match).
+    const book = sessionRow?.book
+      ? {
+          title: sessionRow.book.title,
+          contents: selectBookContents(sessionRow.book.chapters, sessionRow.book.contents, topic),
+        }
+      : undefined;
 
     // Difficulty calibration: derive the competition + problem-number band, then
     // retrieve real same-difficulty anchor problems from the corpus.
     const cal = calibrationFor(student);
-    const category = categoryFor(student.subject, topic);
+    const category = categoryFor(student.level, topic);
     const anchors = cal.competition
       ? await getAnchors({
           competition: cal.competition,
           bandLow: cal.bandLow,
           bandHigh: cal.bandHigh,
           category,
-          count: 2,
+          count: 4,
         })
       : [];
 
@@ -203,14 +237,15 @@ export async function POST(request: Request) {
       `[/api/generate] competition=${cal.competition ?? "none"} band=${cal.bandLow ?? "?"}-${cal.bandHigh ?? "?"} category=${category ?? "any"} anchors=${anchors.length}`
     );
 
-    const prompt = buildPrompt({
-      subject: student.subject,
+    const built = buildPrompt({
       level: student.level,
       topic,
       count,
       recentTopics,
-      book: sessionRow?.book ?? undefined,
+      book,
       competition: cal.competition ?? undefined,
+      bandLow: cal.bandLow,
+      bandHigh: cal.bandHigh,
       anchors,
     });
 
@@ -222,23 +257,34 @@ export async function POST(request: Request) {
     const seen = new Set<string>();
     for (let attempt = 0; attempt < 2 && kept.length < count; attempt++) {
       const need = count - kept.length;
-      const attemptPrompt =
+      // On the deficit retry, only `count` changes in the prompt (user block).
+      // system is stable (cached), so rebuild only the user block by calling
+      // buildPrompt with the updated count — the system value is identical and
+      // the prompt-cache hit still applies.
+      const attemptBuilt =
         attempt === 0
-          ? prompt
+          ? built
           : buildPrompt({
-              subject: student.subject,
               level: student.level,
               topic,
-              count: need,
+              count: need, // only this differs from the first call
               recentTopics,
-              book: sessionRow?.book ?? undefined,
+              book,
               competition: cal.competition ?? undefined,
+              bandLow: cal.bandLow,
+              bandHigh: cal.bandHigh,
               anchors,
             });
 
       let batch: Problem[];
       try {
-        batch = await callTool(client, model, attemptPrompt, attempt === 0 ? count : need);
+        batch = await callTool(
+          client,
+          model,
+          attemptBuilt.system,
+          attemptBuilt.user,
+          need // same as `count` on attempt 0; explicit for clarity
+        );
       } catch (e) {
         const msg = e instanceof Error ? e.message : "";
         if (kept.length > 0) break; // keep what we have if a retry fails

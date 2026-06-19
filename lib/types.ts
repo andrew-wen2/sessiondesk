@@ -9,12 +9,12 @@ export type CalendarSession = {
   studentName: string;
 };
 
+// Fields the Add-session combobox needs — name + the rate/level it autofills.
 export type StudentOption = {
   id: string;
   name: string;
   rate: number;
   level: string;
-  subject: string;
 };
 
 export type Problem = {

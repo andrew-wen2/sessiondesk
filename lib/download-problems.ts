@@ -47,7 +47,7 @@ export function problemsFilename(startIso: string, studentName: string): string 
 // suggested filename: MM-DD-studentname.pdf.
 export function downloadProblemsPdf(
   problems: Problem[],
-  opts: { startIso: string; studentName: string; subject?: string; topic?: string }
+  opts: { startIso: string; studentName: string; topic?: string }
 ): boolean {
   if (problems.length === 0) return false;
 
@@ -58,20 +58,9 @@ export function downloadProblemsPdf(
   const questions = problems
     .map(
       (p, i) => `
-      <div class="item">
+      <div class="item${i < problems.length - 1 ? " page-break" : ""}">
         <div class="label">Problem ${i + 1}</div>
         <div class="body">${renderMath(p.problem)}</div>
-      </div>`
-    )
-    .join("");
-
-  const answers = problems
-    .map(
-      (p, i) => `
-      <div class="item">
-        <div class="label">Problem ${i + 1}</div>
-        <div class="body"><strong>Answer.</strong> ${renderMath(p.answer)}</div>
-        <div class="body"><strong>Solution.</strong> ${renderMath(p.solution)}</div>
       </div>`
     )
     .join("");
@@ -88,19 +77,15 @@ export function downloadProblemsPdf(
     h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.05em; color: #444;
          border-bottom: 1px solid #ccc; padding-bottom: 4px; margin: 28px 0 12px; }
     .item { margin: 0 0 18px; break-inside: avoid; }
+    /* One problem per page in the Problems section (last one needs no break —
+       the answer key already starts on a fresh page). */
+    .page-break { page-break-after: always; }
     .label { font-size: 12px; font-weight: bold; color: #888; margin-bottom: 4px; }
     .body { margin-bottom: 6px; }
-    .answer-key { page-break-before: always; }
   </style>
 </head>
 <body>
-  <h2>Problems</h2>
   ${questions}
-
-  <div class="answer-key">
-    <h2>Answer Key</h2>
-    ${answers}
-  </div>
 </body>
 </html>`;
 

@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import Calendar from "@/components/Calendar";
+import GcalBanner from "@/components/GcalBanner";
+import { isGcalConfigured } from "@/lib/gcal-token";
 import type { CalendarSession } from "@/lib/types";
 
 // Calendar (default view). Server component: loads the visible month from the
@@ -15,12 +17,21 @@ export default async function CalendarPage({
   const start = new Date(year, mon - 1, 1);
   const end = new Date(year, mon, 1);
 
+  // Calendar chips need id/start/paid/amount and student name only — skip
+  // problems (heavy Json), homework, and other unused fields.
   const rows = await prisma.session.findMany({
     where: {
       start: { gte: start, lt: end },
       ...(studentId ? { studentId } : {}),
     },
-    include: { student: { select: { name: true } } },
+    select: {
+      id: true,
+      start: true,
+      paid: true,
+      amount: true,
+      studentId: true,
+      student: { select: { name: true } },
+    },
     orderBy: { start: "asc" },
   });
 
@@ -36,5 +47,15 @@ export default async function CalendarPage({
     ? { id: studentId, name: rows[0]?.student.name ?? "student" }
     : null;
 
-  return <Calendar month={month} sessions={sessions} studentFilter={studentFilter} />;
+  return (
+    <div className="space-y-6">
+      <GcalBanner configured={isGcalConfigured()} />
+      <Calendar
+        month={month}
+        sessions={sessions}
+        studentFilter={studentFilter}
+        gcalConfigured={isGcalConfigured()}
+      />
+    </div>
+  );
 }

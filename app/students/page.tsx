@@ -22,7 +22,6 @@ export default async function StudentsPage() {
   const students: StudentCardData[] = rows.map((s) => ({
     id: s.id,
     name: s.name,
-    subject: s.subject,
     level: s.level,
     rate: s.rate,
     recentTopics: s.sessions.map((x) => ({ start: x.start.toISOString(), topic: x.topic })),

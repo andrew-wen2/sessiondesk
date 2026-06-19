@@ -101,13 +101,21 @@ export async function PATCH(
       const eventId = session.googleEventId;
       after(async () => {
         try {
-          await updateEvent(eventId, {
+          const newId = await updateEvent(eventId, {
             id: session.id,
             start: session.start,
             durationMin: session.durationMin,
             topic: session.topic,
-            student: { name: session.student.name, subject: session.student.subject },
+            student: { name: session.student.name },
           });
+          // updateEvent recreates the event if it was deleted on Google and
+          // returns a new id — persist it so the mirror stays linked.
+          if (newId !== eventId) {
+            await prisma.session.update({
+              where: { id: session.id },
+              data: { googleEventId: newId },
+            });
+          }
         } catch (e) {
           console.error("GCal sync failed (update):", e);
         }

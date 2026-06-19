@@ -4,7 +4,11 @@ import { prisma } from "@/lib/prisma";
 // GET /api/students — all students, sorted by name (for the combobox).
 export async function GET() {
   try {
-    const students = await prisma.student.findMany({ orderBy: { name: "asc" } });
+    // Combobox only needs id/name/rate/level — skip notes, timestamps.
+    const students = await prisma.student.findMany({
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, rate: true, level: true },
+    });
     return NextResponse.json(students);
   } catch {
     return NextResponse.json(
@@ -14,8 +18,8 @@ export async function GET() {
   }
 }
 
-// POST /api/students — create a minimal student (name + rate). Subject/level
-// are filled in later from the Students view.
+// POST /api/students — create a minimal student (name + rate). Level is filled
+// in later from the Students view.
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -29,8 +33,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Rate must be a non-negative number." }, { status: 400 });
     }
 
+    // Return only id — the caller (AddSessionModal) reads student.id then POSTs
+    // the session; it doesn't need the full student row.
     const student = await prisma.student.create({
-      data: { name, rate: Math.round(rate), subject: "", level: "", notes: null },
+      data: { name, rate: Math.round(rate), level: "", notes: null },
+      select: { id: true },
     });
     return NextResponse.json(student, { status: 201 });
   } catch {

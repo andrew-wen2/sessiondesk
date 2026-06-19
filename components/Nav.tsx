@@ -10,7 +10,7 @@ const LINKS = [
   { href: "/payments", label: "Payments" },
 ];
 
-export default function Nav() {
+export default function Nav({ gcalConnected = false }: { gcalConnected?: boolean }) {
   const pathname = usePathname();
   return (
     <nav className="border-b border-gray-200 bg-white">
@@ -29,6 +29,18 @@ export default function Nav() {
               </Link>
             );
           })}
+        </div>
+        <div className="ml-auto">
+          {gcalConnected ? (
+            <span className="text-gray-500">Calendar connected</span>
+          ) : (
+            <a
+              href="/api/auth/google/connect"
+              className="text-gray-600 transition-colors duration-150 hover:text-gray-900"
+            >
+              Connect Google Calendar
+            </a>
+          )}
         </div>
       </div>
     </nav>

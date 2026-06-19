@@ -6,10 +6,9 @@ import type { StudentSeed } from "./seed";
 export const students: StudentSeed[] = [
   {
     name: "Student One",
-    subject: "AIME · number theory",
     // Difficulty is inferred from this text — name the competition and the
     // problem-number band, e.g. "AIME, problems 10-15".
-    level: "AIME, problems 10-15",
+    level: "AIME, problems 10-15, number theory",
     rate: 90,
     notes: "anything not captured per-session",
     weekday: 4,
@@ -17,8 +16,7 @@ export const students: StudentSeed[] = [
   },
   {
     name: "Student Two",
-    subject: "AMC 10 · number theory",
-    level: "AMC 10, problems 16-22",
+    level: "AMC 10, problems 16-22, number theory",
     rate: 60,
     notes: "anything not captured per-session",
     weekday: 0,

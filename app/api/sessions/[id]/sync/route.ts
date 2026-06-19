@@ -11,9 +11,17 @@ export async function POST(
 ) {
   const { id } = await params;
   try {
+    // Select only the fields needed to create the GCal event — skip problems/homework/etc.
     const session = await prisma.session.findUniqueOrThrow({
       where: { id },
-      include: { student: true },
+      select: {
+        id: true,
+        start: true,
+        durationMin: true,
+        topic: true,
+        googleEventId: true,
+        student: { select: { name: true } },
+      },
     });
 
     if (session.googleEventId) {
@@ -31,7 +39,7 @@ export async function POST(
       start: session.start,
       durationMin: session.durationMin,
       topic: session.topic,
-      student: { name: session.student.name, subject: session.student.subject },
+      student: { name: session.student.name },
     });
     await prisma.session.update({ where: { id }, data: { googleEventId } });
     return NextResponse.json({ googleEventId });

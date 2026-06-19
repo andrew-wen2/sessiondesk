@@ -14,8 +14,7 @@ model Student {
   id            String    @id @default(cuid())
   name           String
   parentContact  String?
-  subject        String // e.g. "AIME · number theory"
-  level          String // calibration string fed to the generator; keep specific
+  level          String // calibration string fed to the generator; competition + difficulty band are inferred from it; keep specific
   rate           Int // default dollars per session
   notes          String?
   sessions       Session[]

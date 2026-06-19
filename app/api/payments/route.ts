@@ -15,9 +15,11 @@ export async function PATCH(request: Request) {
       );
     }
 
+    // Select only the fields the ledger needs — skip problems/homework/etc.
     const session = await prisma.session.update({
       where: { id: sessionId },
       data: { paid: body.paid },
+      select: { id: true, paid: true },
     });
     return NextResponse.json(session);
   } catch (e) {

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type { CalendarSession } from "@/lib/types";
 import SessionChip from "./SessionChip";
 import AddSessionModal from "./AddSessionModal";
+import SyncAllButton from "./SyncAllButton";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -17,10 +18,12 @@ export default function Calendar({
   month,
   sessions,
   studentFilter = null,
+  gcalConfigured = false,
 }: {
   month: string; // YYYY-MM
   sessions: CalendarSession[];
   studentFilter?: { id: string; name: string } | null;
+  gcalConfigured?: boolean;
 }) {
   const router = useRouter();
   const [year, mon] = month.split("-").map(Number);
@@ -82,6 +85,7 @@ export default function Calendar({
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">{monthLabel}</h1>
         <div className="flex items-center gap-2 text-sm">
+          <SyncAllButton month={month} configured={gcalConfigured} />
           <button onClick={prev} className="rounded border border-gray-300 px-2 py-1 hover:bg-gray-50">
             ← Prev
           </button>

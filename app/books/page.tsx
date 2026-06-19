@@ -1,14 +1,28 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { toDisplayChapters } from "@/lib/book-chapters";
 import AddBookForm from "@/components/AddBookForm";
 
 // Reads live DB data — render on demand.
 export const dynamic = "force-dynamic";
 
 // Books library. The contents field of each book is fed to the problem
-// generator when a session is linked to it.
+// generator when a session is linked to it. Cards preview chapter titles only —
+// section detail stays in the DB but isn't displayed.
 export default async function BooksPage() {
-  const books = await prisma.book.findMany({ orderBy: { title: "asc" } });
+  const rows = await prisma.book.findMany({
+    orderBy: { title: "asc" },
+    select: { id: true, title: true, author: true, chapters: true, contents: true },
+  });
+
+  // Reduce to title-only data before render so section/concept detail never
+  // reaches the client payload.
+  const books = rows.map((b) => ({
+    id: b.id,
+    title: b.title,
+    author: b.author,
+    chapterTitles: toDisplayChapters(b.chapters, b.contents).map((c) => c.title),
+  }));
 
   return (
     <div className="space-y-4">
@@ -26,7 +40,8 @@ export default async function BooksPage() {
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
           {books.map((b) => {
-            const preview = b.contents.trim();
+            const preview = b.chapterTitles.slice(0, 4).join(" · ");
+            const more = b.chapterTitles.length - 4;
             return (
               <Link
                 key={b.id}
@@ -36,7 +51,9 @@ export default async function BooksPage() {
                 <div className="font-semibold text-blue-600">{b.title}</div>
                 {b.author && <div className="text-xs text-gray-500">{b.author}</div>}
                 <p className="mt-1 line-clamp-2 text-sm text-gray-600">
-                  {preview ? preview : "No chapter contents yet — click to add."}
+                  {b.chapterTitles.length > 0
+                    ? `${preview}${more > 0 ? ` · +${more} more` : ""}`
+                    : "No chapters yet — click to add."}
                 </p>
               </Link>
             );

@@ -9,7 +9,6 @@ const prisma = new PrismaClient();
 // 0=Sun, 1=Mon ... 6=Sat. Recurring weekday + start hour (local) per student.
 export type StudentSeed = {
   name: string;
-  subject: string;
   level: string;
   rate: number;
   notes: string;

@@ -4,7 +4,6 @@ import LearningHistory, { type HistoryItem } from "./LearningHistory";
 export type StudentCardData = {
   id: string;
   name: string;
-  subject: string;
   level: string;
   rate: number;
   recentTopics: HistoryItem[]; // last 3, most recent first

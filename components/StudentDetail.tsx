@@ -5,7 +5,6 @@ import { useState } from "react";
 export type StudentDetailData = {
   id: string;
   name: string;
-  subject: string;
   level: string;
   rate: number;
   notes: string;

@@ -15,13 +15,31 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-// Confirmed-reachable AAPT F=ma problems-only exam PDFs.
-const SOURCES: { year: number; url: string }[] = [
-  { year: 2024, url: "https://aapt.org/physicsteam/upload/2024_F-ma_Exam.pdf" },
-  { year: 2023, url: "https://aapt.org/physicsteam/upload/2023_F-ma_Exam.pdf" },
-  { year: 2021, url: "https://aapt.org/physicsteam/upload/F-ma-2021.pdf" },
+// Confirmed-reachable AAPT F=ma problems-only exam PDFs (each HTTP 200 verified).
+// 2010–2025. From 2018 on (and 2020/2022) AAPT runs two versions per year (A/B);
+// the `variant` keeps their ids distinct since both number 1–25. Pre-2010 exams
+// exist but are intentionally excluded (corpus is cleaned to 2010+).
+const SOURCES: { year: number; variant?: string; url: string }[] = [
   { year: 2010, url: "https://www.aapt.org/physicsteam/2010/upload/2010_Fma.pdf" },
-  { year: 2009, url: "https://www.aapt.org/physicsteam/2010/upload/2009_F-ma.pdf" },
+  { year: 2011, url: "https://www.aapt.org/physicsteam/2012/upload/WebAssign-exam1-2011-1-4.pdf" },
+  { year: 2012, url: "https://www.aapt.org/physicsteam/2013/upload/exam1-2012-unlocked.pdf" },
+  { year: 2013, url: "https://www.aapt.org/physicsteam/2014/upload/exam1-2013-1-6-unlocked.pdf" },
+  { year: 2014, url: "https://www.aapt.org/physicsteam/2015/upload/exam1-2014-2-2.pdf" },
+  { year: 2015, url: "https://www.aapt.org/physicsteam/2015/upload/exam1-2015-1-8.pdf" },
+  { year: 2016, url: "https://www.aapt.org/physicsteam/2016/upload/exam1-2016-3-1-2.pdf" },
+  { year: 2017, url: "https://www.aapt.org/physicsteam/2018/upload/2017-Fma-exam.pdf" },
+  { year: 2018, variant: "A", url: "https://www.aapt.org/physicsteam/2019/upload/Fma-2018-A.pdf" },
+  { year: 2018, variant: "B", url: "https://www.aapt.org/physicsteam/2019/upload/Fma-2018-B.pdf" },
+  { year: 2019, variant: "A", url: "https://www.aapt.org/physicsteam/2020/upload/2019_Fma_A.pdf" },
+  { year: 2019, variant: "B", url: "https://www.aapt.org/physicsteam/2020/upload/2019_Fma_B.pdf" },
+  { year: 2020, variant: "A", url: "https://www.aapt.org/physicsteam/upload/2020_Fma_A_v2.pdf" },
+  { year: 2020, variant: "B", url: "https://www.aapt.org/physicsteam/upload/2020_Fma_B.pdf" },
+  { year: 2021, url: "https://aapt.org/physicsteam/upload/F-ma-2021.pdf" },
+  { year: 2022, variant: "A", url: "https://www.aapt.org/physicsteam/upload/2022_Fma_Exam_A-2.pdf" },
+  { year: 2022, variant: "B", url: "https://www.aapt.org/physicsteam/upload/2022_Fma_Exam_B.pdf" },
+  { year: 2023, url: "https://aapt.org/physicsteam/upload/2023_F-ma_Exam.pdf" },
+  { year: 2024, url: "https://aapt.org/physicsteam/upload/2024_F-ma_Exam.pdf" },
+  { year: 2025, url: "https://www.aapt.org/physicsteam/upload/FMA-exam.pdf" },
 ];
 
 const FIGURE = /\b(shown|figure|diagram|graph|as shown|following shows|depicted|below|above|picture|sketch|in the diagram|pictured)\b/i;
@@ -58,13 +76,17 @@ async function extractProblems(year: number, url: string) {
 
 async function main() {
   let total = 0;
-  for (const { year, url } of SOURCES) {
+  for (const { year, variant, url } of SOURCES) {
+    const label = `${year}${variant ? variant : ""}`;
     const problems = await extractProblems(year, url);
     for (const p of problems) {
+      // Variant-less years keep the original id shape (hid("fma", year, number))
+      // so re-runs update in place; A/B exams add the variant to stay distinct.
+      const id = variant ? hid("fma", year, variant, p.number) : hid("fma", year, p.number);
       await prisma.referenceProblem.upsert({
-        where: { id: hid("fma", year, p.number) },
+        where: { id },
         create: {
-          id: hid("fma", year, p.number),
+          id,
           source: "Fma",
           year,
           number: p.number,
@@ -75,7 +97,7 @@ async function main() {
         update: { statement: p.statement, category: "mechanics" },
       });
     }
-    console.log(`  ${year}: ${problems.length} text-only problems ingested`);
+    console.log(`  ${label}: ${problems.length} text-only problems ingested`);
     total += problems.length;
   }
 

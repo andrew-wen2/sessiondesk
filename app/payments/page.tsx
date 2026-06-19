@@ -18,8 +18,18 @@ function getWeekBounds() {
 // Payments ledger. Server component: loads all sessions, groups by student in
 // app code, computes masthead stats.
 export default async function PaymentsPage() {
+  // The ledger only renders id/start/topic/amount/paid and student name/id.
+  // Skip problems (heavy Json), homework, googleEventId, and other unused fields.
   const sessions = await prisma.session.findMany({
-    include: { student: { select: { id: true, name: true } } },
+    select: {
+      id: true,
+      studentId: true,
+      start: true,
+      topic: true,
+      amount: true,
+      paid: true,
+      student: { select: { id: true, name: true } },
+    },
     orderBy: [{ student: { name: "asc" } }, { start: "desc" }],
   });
 

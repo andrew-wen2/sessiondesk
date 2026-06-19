@@ -9,6 +9,7 @@
     "lint": "next lint",
     "ingest:corpus": "tsx scripts/ingest-corpus.ts",
     "ingest:fma": "tsx scripts/ingest-fma.ts",
+    "cleanup:corpus": "tsx scripts/cleanup-corpus.ts",
     "copy-pdf-worker": "node scripts/copy-pdf-worker.mjs",
     "postinstall": "prisma generate && node scripts/copy-pdf-worker.mjs"
   },
@@ -16,7 +17,7 @@
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.1",
+    "@anthropic-ai/sdk": "^0.105.0",
     "@prisma/client": "^6.1.0",
     "googleapis": "^144.0.0",
     "katex": "^0.16.11",

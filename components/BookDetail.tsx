@@ -141,7 +141,7 @@ export default function BookDetail({ book }: { book: BookDetailData }) {
 
       <div>
         <div className="flex items-center justify-between">
-          <label className="block text-sm font-semibold text-gray-500">Chapters</label>
+          <label className="block text-sm font-semibold text-gray-500">Chapter contents</label>
           <input
             ref={fileRef}
             type="file"
@@ -172,12 +172,14 @@ export default function BookDetail({ book }: { book: BookDetailData }) {
           <table className="mt-2 w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wide text-gray-400">
+                <th className="w-12 py-1.5 pr-3">#</th>
                 <th className="py-1.5 pr-2">Chapter</th>
               </tr>
             </thead>
             <tbody>
               {chapters.map((c, i) => (
                 <tr key={i} className="border-b border-gray-100">
+                  <td className="py-1.5 pr-3 text-gray-500">{c.number || i + 1}</td>
                   <td className="py-1.5 pr-2">{c.title}</td>
                 </tr>
               ))}

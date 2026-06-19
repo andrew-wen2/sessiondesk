@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { PDFParse } from "pdf-parse";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { formatChapters } from "@/lib/book-chapters";
 
 // POST /api/books/[id]/parse-pdf — server-only. Fills book.contents with a clean,
 // section-level chapter outline (chapter → sub-sections → key concepts).
@@ -82,24 +83,9 @@ const CHAPTERS_TOOL: Anthropic.Tool = {
 type Section = { number: string; title: string; concepts: string };
 type Chapter = { number: string; title: string; sections: Section[] };
 
-// Render the nested outline into the indented text the contents textarea shows and
-// the generator reads:
-//   Ch 3: Number Theory
-//     3.1 Divisibility — gcd, division algorithm, Bezout
-//     3.2 Primes — sieve, fundamental theorem of arithmetic
-function formatChapters(chapters: Chapter[]): string {
-  return chapters
-    .map((c) => {
-      const head = c.number ? `Ch ${c.number}: ${c.title}` : c.title;
-      const lines = [head];
-      for (const s of c.sections) {
-        const sh = s.number ? `  ${s.number} ${s.title}` : `  ${s.title}`;
-        lines.push(s.concepts ? `${sh} — ${s.concepts}` : sh);
-      }
-      return lines.join("\n");
-    })
-    .join("\n\n");
-}
+// formatChapters lives in lib/book-chapters.ts (shared with selectBookContents).
+// The local Chapter/Section types are structurally identical to its BookChapter/
+// BookSection, so they pass through without conversion.
 
 // A clean error the route can return to the UI without leaking internals.
 class ParseError extends Error {

@@ -1,6 +1,7 @@
 // Maps a student to a competition + difficulty band for corpus anchor retrieval
-// and rubric selection, inferred entirely from the free-text subject/level. There
-// are no manual calibration fields — the level string is the single source.
+// and rubric selection, inferred entirely from the free-text `level`. There are
+// no manual calibration fields — the level string is the single source, so keep
+// the competition name and problem-number band explicit in it.
 
 export type Competition = "AMC10" | "AMC12" | "AIME" | "Fma";
 
@@ -34,17 +35,31 @@ function detectBand(text: string, competition: Competition | null): [number | nu
   return [null, null];
 }
 
-// Infer competition + difficulty band from the student's subject + level text.
-export function calibrationFor(student: { subject: string; level: string }): Calibration {
-  const text = `${student.subject} ${student.level}`;
+// When the level names a competition but no explicit problem-number band, aim
+// high rather than leaving the band unset (which would pull anchors across all
+// difficulties, skewing easy). A challenging default beats an unset one for a
+// tutor who wants problems the student can't already do.
+const DEFAULT_BAND: Record<Competition, [number, number]> = {
+  AIME: [6, 15],
+  AMC10: [12, 25],
+  AMC12: [12, 25],
+  Fma: [12, 25],
+};
+
+// Infer competition + difficulty band from the student's level text.
+export function calibrationFor(student: { level: string }): Calibration {
+  const text = student.level;
   const competition = detectCompetition(text);
-  const [bandLow, bandHigh] = detectBand(text, competition);
+  let [bandLow, bandHigh] = detectBand(text, competition);
+  if (competition && bandLow == null && bandHigh == null) {
+    [bandLow, bandHigh] = DEFAULT_BAND[competition];
+  }
   return { competition, bandLow, bandHigh };
 }
 
-// Coarse category for retrieval, from the student's subject + session topic.
-export function categoryFor(subject: string, topic: string): string | null {
-  const s = `${subject} ${topic}`.toLowerCase();
+// Coarse category for retrieval, from the student's level + session topic.
+export function categoryFor(level: string, topic: string): string | null {
+  const s = `${level} ${topic}`.toLowerCase();
   if (/geometr|triangle|circle|angle|polygon/.test(s)) return "geometry";
   if (/combinatori|probabilit|counting|permutation|combination/.test(s)) return "combinatorics";
   if (/number\s*theor|divisor|prime|modul|congruen/.test(s)) return "number_theory";
