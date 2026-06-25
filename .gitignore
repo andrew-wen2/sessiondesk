@@ -33,3 +33,6 @@ next-env.d.ts
 
 # student data — real roster, never commit (use seed.roster.example.ts as the template)
 /prisma/seed.roster.ts
+
+# project spec / internal instructions — kept out of the public repo
+/CLAUDE.md
