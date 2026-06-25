@@ -36,3 +36,6 @@ next-env.d.ts
 
 # project spec / internal instructions — kept out of the public repo
 /CLAUDE.md
+
+# Claude Code workspace (agents, skills, agent memory) — local only
+/.claude/
