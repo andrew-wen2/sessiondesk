@@ -6,6 +6,11 @@
 
 export const SESSION_COOKIE = "session";
 
+// Short-lived cookie holding the OAuth `state` nonce for "Sign in with Google".
+// Set when the sign-in flow starts, verified (and cleared) at the callback to
+// defend against login CSRF — a forged callback can't know this random value.
+export const OAUTH_STATE_COOKIE = "g_oauth_state";
+
 // 30 days, in seconds.
 export const SESSION_MAX_AGE = 60 * 60 * 24 * 30;
 

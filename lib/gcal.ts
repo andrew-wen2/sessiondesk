@@ -144,10 +144,12 @@ export async function exchangeCode(code: string) {
 // the single registered redirect URI with the Calendar flow, distinguished by
 // the `state` param the callback reads). ---
 
-export function getLoginAuthUrl(): string {
+// `state` carries a per-request CSRF nonce (the caller sets a matching cookie and
+// the callback verifies it). Format: "signin:<nonce>".
+export function getLoginAuthUrl(state: string): string {
   return getAppOAuthClient().generateAuthUrl({
     scope: LOGIN_SCOPES,
-    state: "signin",
+    state,
     prompt: "select_account", // let the user pick which Google account to use
   });
 }

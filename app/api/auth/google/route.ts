@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { exchangeCode, verifyGoogleLogin } from "@/lib/gcal";
 import { getCurrentUserId } from "@/lib/session";
-import { SESSION_COOKIE, SESSION_MAX_AGE, signSession } from "@/lib/auth";
+import { OAUTH_STATE_COOKIE, SESSION_COOKIE, SESSION_MAX_AGE, signSession } from "@/lib/auth";
 
 // GET /api/auth/google — shared OAuth callback for both Google flows, told apart
 // by the `state` param:
@@ -15,7 +16,7 @@ export async function GET(request: Request) {
   const error = searchParams.get("error");
   const state = searchParams.get("state");
 
-  if (state === "signin") return handleSignin(request, code, error);
+  if (state?.startsWith("signin:")) return handleSignin(request, code, error, state);
 
   // --- Calendar-connect flow (requires an existing session) ---
   const userId = await getCurrentUserId();
@@ -47,18 +48,32 @@ export async function GET(request: Request) {
   }
 }
 
-// Sign-in-with-Google: verify the identity, find-or-create the user by email
-// (linking to an existing email/password account when the email matches), and
-// issue the session cookie on the redirect to the app.
-async function handleSignin(request: Request, code: string | null, error: string | null) {
-  if (error || !code) {
-    return NextResponse.redirect(new URL("/login?error=google", request.url));
+// Sign-in-with-Google: verify the CSRF nonce + identity, find-or-create the user
+// by email (linking to an existing email/password account when the email matches),
+// and issue the session cookie on the redirect to the app.
+async function handleSignin(
+  request: Request,
+  code: string | null,
+  error: string | null,
+  state: string
+) {
+  // Redirect back to /login on any failure, always clearing the one-time state cookie.
+  const fail = () => {
+    const res = NextResponse.redirect(new URL("/login?error=google", request.url));
+    res.cookies.set(OAUTH_STATE_COOKIE, "", { path: "/", maxAge: 0 });
+    return res;
+  };
+
+  // CSRF: the nonce in `state` must match the cookie set when the flow started.
+  const expectedNonce = (await cookies()).get(OAUTH_STATE_COOKIE)?.value;
+  const providedNonce = state.slice("signin:".length);
+  if (error || !code || !expectedNonce || providedNonce !== expectedNonce) {
+    return fail();
   }
+
   try {
     const identity = await verifyGoogleLogin(code);
-    if (!identity) {
-      return NextResponse.redirect(new URL("/login?error=google", request.url));
-    }
+    if (!identity) return fail();
     // Same email = same person → log into the existing account and stamp googleId;
     // otherwise create a Google-only account (empty passwordHash until they set one).
     const user = await prisma.user.upsert({
@@ -67,6 +82,7 @@ async function handleSignin(request: Request, code: string | null, error: string
       create: { email: identity.email, passwordHash: "", googleId: identity.googleId },
     });
     const res = NextResponse.redirect(new URL("/", request.url));
+    res.cookies.set(OAUTH_STATE_COOKIE, "", { path: "/", maxAge: 0 }); // one-time use
     res.cookies.set(SESSION_COOKIE, await signSession(user.id), {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -77,6 +93,6 @@ async function handleSignin(request: Request, code: string | null, error: string
     return res;
   } catch (e) {
     console.error("[/api/auth/google] sign-in failed:", e);
-    return NextResponse.redirect(new URL("/login?error=google", request.url));
+    return fail();
   }
 }
