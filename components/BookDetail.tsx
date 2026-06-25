@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { prepareForParse } from "@/lib/extract-pdf-text";
 import { toDisplayChapters, type DisplayChapter } from "@/lib/book-chapters";
+import { SaveIndicator, type SaveStatus } from "./SaveIndicator";
 
 export type BookDetailData = {
   id: string;
@@ -12,8 +13,6 @@ export type BookDetailData = {
   chapters: DisplayChapter[];
 };
 
-type Status = "idle" | "saving" | "saved" | "error";
-
 export default function BookDetail({ book }: { book: BookDetailData }) {
   const router = useRouter();
 
@@ -21,7 +20,7 @@ export default function BookDetail({ book }: { book: BookDetailData }) {
   const [author, setAuthor] = useState(book.author);
   const [chapters, setChapters] = useState<DisplayChapter[]>(book.chapters);
   const [saved, setSaved] = useState({ title: book.title, author: book.author });
-  const [status, setStatus] = useState<Status>("idle");
+  const [status, setStatus] = useState<SaveStatus>("idle");
 
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -111,11 +110,7 @@ export default function BookDetail({ book }: { book: BookDetailData }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-xs">
-        {status === "saving" && <span className="text-gray-400">Saving…</span>}
-        {status === "saved" && <span className="text-gray-400">Saved</span>}
-        {status === "error" && (
-          <span className="text-red-600">Save failed — edit and blur again to retry</span>
-        )}
+        <SaveIndicator status={status} />
       </div>
 
       <div>

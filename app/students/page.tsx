@@ -1,13 +1,16 @@
 import { prisma } from "@/lib/prisma";
+import { requireUserId } from "@/lib/session";
 import StudentCard, { type StudentCardData } from "@/components/StudentCard";
 
 // Reads live DB data — render on demand, never prerender at build time.
 export const dynamic = "force-dynamic";
 
-// Students view. Server component: lists students with their derived learning
-// history (last 3 covered topics, most recent first).
+// Students view. Server component: lists the user's students with their derived
+// learning history (last 3 covered topics, most recent first).
 export default async function StudentsPage() {
+  const userId = await requireUserId();
   const rows = await prisma.student.findMany({
+    where: { userId },
     orderBy: { name: "asc" },
     include: {
       sessions: {

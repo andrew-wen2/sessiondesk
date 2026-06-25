@@ -3,22 +3,15 @@
 import { Suspense, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-// Inline feedback after the Google OAuth redirect lands on `/?gcal=...`.
-// `connected` has two variants: OAuth can succeed before the operator pastes the
-// logged refresh token into GOOGLE_REFRESH_TOKEN (single-user Option A), so until
-// isGcalConfigured() is true we tell them the token still needs to be set.
-function bannerFor(status: string, configured: boolean):
+// Inline feedback after the Google OAuth redirect lands on `/?gcal=...`. The
+// callback stores the user's refresh token on connect, so success is terminal —
+// no follow-up step.
+function bannerFor(status: string):
   | { tone: "ok" | "warn" | "error"; text: string }
   | null {
   switch (status) {
     case "connected":
-      return configured
-        ? { tone: "ok", text: "Calendar connected." }
-        : {
-            tone: "warn",
-            text:
-              "Google authorized. Copy the refresh token from the server logs into GOOGLE_REFRESH_TOKEN, then redeploy to finish connecting.",
-          };
+      return { tone: "ok", text: "Calendar connected." };
     case "denied":
       return { tone: "warn", text: "Calendar connection denied." };
     case "error":
@@ -34,14 +27,14 @@ const TONE = {
   error: "border-red-200 bg-white text-red-600",
 };
 
-function Banner({ configured }: { configured: boolean }) {
+function Banner() {
   const params = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
   const [dismissed, setDismissed] = useState(false);
 
   const status = params.get("gcal");
-  const banner = status ? bannerFor(status, configured) : null;
+  const banner = status ? bannerFor(status) : null;
   if (!banner || dismissed) return null;
 
   function dismiss() {
@@ -69,10 +62,10 @@ function Banner({ configured }: { configured: boolean }) {
 }
 
 // useSearchParams requires a Suspense boundary or `next build` fails.
-export default function GcalBanner({ configured }: { configured: boolean }) {
+export default function GcalBanner() {
   return (
     <Suspense fallback={null}>
-      <Banner configured={configured} />
+      <Banner />
     </Suspense>
   );
 }

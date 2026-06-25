@@ -1,20 +1,26 @@
 import { NextResponse, after } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { updateEvent, deleteEvent } from "@/lib/gcal";
-import { isGcalConfigured } from "@/lib/gcal-token";
+import { getCurrentUserId } from "@/lib/session";
+import { updateEvent, deleteEvent, attachMeetLink, toSessionForGCal } from "@/lib/gcal";
+import { getGcalAccount } from "@/lib/gcal-account";
+import { parseNonNegInt, parsePositiveInt, parseDate } from "@/lib/validation";
 
-// GET /api/sessions/[id] — single session with full student.
+// GET /api/sessions/[id] — single session with full student (must be the user's).
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
   try {
-    const session = await prisma.session.findUniqueOrThrow({
-      where: { id },
+    const userId = await getCurrentUserId();
+    if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+
+    const session = await prisma.session.findFirst({
+      where: { id, userId },
       include: { student: true },
     });
+    if (!session) return NextResponse.json({ error: "Session not found." }, { status: 404 });
     return NextResponse.json(session);
   } catch (e) {
     console.error("[/api/sessions/[id] GET]", e);
@@ -31,6 +37,12 @@ export async function PATCH(
 ) {
   const { id } = await params;
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+
+    const owned = await prisma.session.findFirst({ where: { id, userId }, select: { id: true } });
+    if (!owned) return NextResponse.json({ error: "Session not found." }, { status: 404 });
+
     const body = await request.json();
     const data: Prisma.SessionUpdateInput = {};
 
@@ -39,30 +51,36 @@ export async function PATCH(
     if (typeof body.paid === "boolean") data.paid = body.paid;
 
     if (body.start !== undefined) {
-      const start = new Date(body.start);
-      if (Number.isNaN(start.getTime())) {
+      const start = parseDate(body.start);
+      if (!start.ok) {
         return NextResponse.json({ error: "Invalid date/time." }, { status: 400 });
       }
-      data.start = start;
+      data.start = start.value;
     }
     if (body.durationMin !== undefined) {
-      const d = Number(body.durationMin);
-      if (!Number.isInteger(d) || d <= 0) {
+      const d = parsePositiveInt(body.durationMin);
+      if (!d.ok) {
         return NextResponse.json({ error: "Duration must be a positive number." }, { status: 400 });
       }
-      data.durationMin = d;
+      data.durationMin = d.value;
     }
     if (body.amount !== undefined) {
-      const a = Number(body.amount);
-      if (!Number.isFinite(a) || a < 0) {
+      const a = parseNonNegInt(body.amount);
+      if (!a.ok) {
         return NextResponse.json({ error: "Rate must be a non-negative number." }, { status: 400 });
       }
-      data.amount = Math.round(a);
+      data.amount = a.value;
     }
     if ("bookId" in body) {
       if (body.bookId === null || body.bookId === "") {
         data.book = { disconnect: true };
       } else if (typeof body.bookId === "string") {
+        // The book must belong to this user before we link it.
+        const book = await prisma.book.findFirst({
+          where: { id: body.bookId, userId },
+          select: { id: true },
+        });
+        if (!book) return NextResponse.json({ error: "That book was not found." }, { status: 400 });
         data.book = { connect: { id: body.bookId } };
       } else {
         return NextResponse.json({ error: "Invalid book." }, { status: 400 });
@@ -89,25 +107,23 @@ export async function PATCH(
     const session = await prisma.session.update({
       where: { id },
       data,
-      include: { student: true },
+      include: { student: { select: { name: true, level: true, meetLink: true } } },
     });
 
-    // Mirror topic/time/duration changes to the GCal event after the response
-    // flushes — never block the save (esp. the debounced topic autosave) on a
-    // Google round-trip.
+    // Mirror topic/time/duration/paid changes to the GCal event after the
+    // response flushes — never block the save on a Google round-trip.
+    // meetLink is now on the student; source it from there.
     const mirrored =
-      data.topic !== undefined || data.start !== undefined || data.durationMin !== undefined;
-    if (session.googleEventId && mirrored && isGcalConfigured()) {
+      data.topic !== undefined ||
+      data.start !== undefined ||
+      data.durationMin !== undefined ||
+      data.paid !== undefined; // paid drives the event color (green/orange)
+    const account = session.googleEventId && mirrored ? await getGcalAccount(userId) : null;
+    if (account && session.googleEventId) {
       const eventId = session.googleEventId;
       after(async () => {
         try {
-          const newId = await updateEvent(eventId, {
-            id: session.id,
-            start: session.start,
-            durationMin: session.durationMin,
-            topic: session.topic,
-            student: { name: session.student.name },
-          });
+          const newId = await updateEvent(account, eventId, toSessionForGCal(session));
           // updateEvent recreates the event if it was deleted on Google and
           // returns a new id — persist it so the mirror stays linked.
           if (newId !== eventId) {
@@ -115,6 +131,11 @@ export async function PATCH(
               where: { id: session.id },
               data: { googleEventId: newId },
             });
+          }
+          // Best-effort: attach the Meet link as structured conferenceData too.
+          // A Google rejection is swallowed — the link is already in the description.
+          if (session.student.meetLink) {
+            await attachMeetLink(account, newId, session.student.meetLink);
           }
         } catch (e) {
           console.error("GCal sync failed (update):", e);
@@ -140,13 +161,20 @@ export async function DELETE(
 ) {
   const { id } = await params;
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+
+    const owned = await prisma.session.findFirst({ where: { id, userId }, select: { id: true } });
+    if (!owned) return NextResponse.json({ error: "Session not found." }, { status: 404 });
+
     const deleted = await prisma.session.delete({ where: { id } });
 
-    if (deleted.googleEventId && isGcalConfigured()) {
+    const account = deleted.googleEventId ? await getGcalAccount(userId) : null;
+    if (account && deleted.googleEventId) {
       const eventId = deleted.googleEventId;
       after(async () => {
         try {
-          await deleteEvent(eventId);
+          await deleteEvent(account, eventId);
         } catch (e) {
           console.error("GCal sync failed (delete):", e);
         }

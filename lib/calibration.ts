@@ -57,6 +57,40 @@ export function calibrationFor(student: { level: string }): Calibration {
   return { competition, bandLow, bandHigh };
 }
 
+// Difficulty thresholds keyed off the band CEILING (bandHigh). Single source of
+// truth shared by tierFor here (model routing) and bandRegister in
+// generation-prompt.ts (prompt framing), so the two decisions can't silently
+// drift apart. AIME is a 15-problem contest; AMC10/AMC12/Fma are 25-problem.
+export const BAND_THRESHOLDS = {
+  // tierFor: bandHigh ≥ this routes to Sonnet (vs the easier tier below it).
+  tier: { AIME_HARD: 10, AMC_MID: 16 },
+  // bandRegister: routine ≤ routineMax, hard ≥ hardMin, core in between.
+  register: {
+    AIME: { routineMax: 5, hardMin: 10 },
+    default: { routineMax: 10, hardMin: 18 }, // AMC10 / AMC12 / Fma
+  },
+} as const;
+
+// Route generation by difficulty band, keyed off the band CEILING (bandHigh),
+// since the prompt drives every set to the hard end of its band.
+//   easy → Haiku, scratch        (AMC/Fma #1–15, unclassified)
+//   mid  → Sonnet, scratch       (AMC/Fma #16–25, AIME #1–9)
+//   hard → Sonnet, variant seeds (AIME #10–15)
+export function tierFor(cal: Calibration): "easy" | "mid" | "hard" {
+  const { competition, bandHigh } = cal;
+  if (!competition) return "easy";
+  if (competition === "AIME") return (bandHigh ?? 0) >= BAND_THRESHOLDS.tier.AIME_HARD ? "hard" : "mid";
+  // AMC10 / AMC12 / Fma — 25-problem contests
+  return (bandHigh ?? 0) >= BAND_THRESHOLDS.tier.AMC_MID ? "mid" : "easy";
+}
+
+// Number of problems to generate, by difficulty tier. The hard tier (AIME #10–15
+// variants) gets a shorter set — those problems are long and demand sustained work;
+// the easy and mid tiers get a fuller set of 10.
+export function countForTier(tier: "easy" | "mid" | "hard"): number {
+  return tier === "hard" ? 5 : 10;
+}
+
 // Coarse category for retrieval, from the student's level + session topic.
 export function categoryFor(level: string, topic: string): string | null {
   const s = `${level} ${topic}`.toLowerCase();

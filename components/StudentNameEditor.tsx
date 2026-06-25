@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-
-type Status = "idle" | "saving" | "saved" | "error";
+import { SaveIndicator, type SaveStatus } from "./SaveIndicator";
 
 // Inline-editable student name styled as the page heading. Saves on blur; an
 // empty name reverts to the last saved value (names are required).
@@ -15,7 +14,7 @@ export default function StudentNameEditor({
 }) {
   const [name, setName] = useState(initialName);
   const [saved, setSaved] = useState(initialName);
-  const [status, setStatus] = useState<Status>("idle");
+  const [status, setStatus] = useState<SaveStatus>("idle");
 
   async function save() {
     const trimmed = name.trim();
@@ -51,11 +50,7 @@ export default function StudentNameEditor({
         aria-label="Student name"
         className="rounded border border-transparent px-1 text-xl font-bold hover:border-gray-200 focus:border-gray-300 focus:outline-none"
       />
-      {status === "saving" && <span className="text-xs text-gray-400">Saving…</span>}
-      {status === "saved" && <span className="text-xs text-gray-400">Saved</span>}
-      {status === "error" && (
-        <span className="text-xs text-red-600">Save failed — edit and blur to retry</span>
-      )}
+      <SaveIndicator status={status} />
     </span>
   );
 }

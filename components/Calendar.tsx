@@ -4,15 +4,12 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { CalendarSession } from "@/lib/types";
+import { pad } from "@/lib/format";
 import SessionChip from "./SessionChip";
 import AddSessionModal from "./AddSessionModal";
 import SyncAllButton from "./SyncAllButton";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-function pad(n: number) {
-  return String(n).padStart(2, "0");
-}
 
 export default function Calendar({
   month,
@@ -82,9 +79,9 @@ export default function Calendar({
         </div>
       )}
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <h1 className="text-xl font-bold">{monthLabel}</h1>
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
           <SyncAllButton month={month} configured={gcalConfigured} />
           <button onClick={prev} className="rounded border border-gray-300 px-2 py-1 hover:bg-gray-50">
             ← Prev
@@ -100,13 +97,13 @@ export default function Calendar({
 
       <div className="grid grid-cols-7 gap-px overflow-hidden rounded-lg border border-gray-200 bg-gray-200 text-sm">
         {WEEKDAYS.map((w) => (
-          <div key={w} className="bg-gray-50 px-2 py-1.5 text-center text-xs font-medium text-gray-500">
+          <div key={w} className="min-w-0 bg-gray-50 px-2 py-1.5 text-center text-xs font-medium text-gray-500">
             {w}
           </div>
         ))}
 
         {cells.map((day, i) => {
-          if (day === null) return <div key={`e${i}`} className="min-h-24 bg-gray-50" />;
+          if (day === null) return <div key={`e${i}`} className="min-h-24 min-w-0 bg-gray-50" />;
           const daySessions = byDay.get(day) ?? [];
           const visible = daySessions.slice(0, 3);
           const extra = daySessions.length - visible.length;
@@ -116,7 +113,7 @@ export default function Calendar({
             <div
               key={day}
               onClick={() => setAddDate(dateISO)}
-              className="relative min-h-24 cursor-pointer bg-white p-1 hover:bg-blue-50/40"
+              className="relative min-h-24 min-w-0 cursor-pointer bg-white p-1 hover:bg-blue-50/40"
             >
               <div
                 className={`mb-1 text-right text-xs ${
@@ -135,7 +132,7 @@ export default function Calendar({
                       e.stopPropagation();
                       setOpenMore(openMore === day ? null : day);
                     }}
-                    className="w-full rounded px-1.5 py-0.5 text-left text-xs text-gray-500 hover:bg-gray-100"
+                    className="w-full truncate rounded px-1.5 py-0.5 text-left text-xs text-gray-500 hover:bg-gray-100"
                   >
                     +{extra} more
                   </button>

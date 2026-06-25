@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { requireUserId } from "@/lib/session";
 import { toDisplayChapters } from "@/lib/book-chapters";
 import BookDetail, { type BookDetailData } from "@/components/BookDetail";
 
@@ -12,11 +13,12 @@ export default async function BookPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const userId = await requireUserId();
 
   // contents is needed as a fallback for legacy books without structured chapters.
   const row = await prisma.book
-    .findUniqueOrThrow({
-      where: { id },
+    .findFirstOrThrow({
+      where: { id, userId },
       select: { id: true, title: true, author: true, chapters: true, contents: true },
     })
     .catch(() => null);

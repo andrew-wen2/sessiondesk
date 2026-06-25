@@ -1,0 +1,184 @@
+// Verification guards for generated problems — pure, dependency-free predicates
+// extracted from /api/generate so they can be reasoned about and unit-tested in
+// isolation (no Anthropic client, no Prisma, no closure capture).
+//
+// Each guard mirrors a rule the generation prompt states. The model reliably
+// hits the target difficulty but sometimes (a) can't actually solve a hard
+// problem and punts a placeholder answer, (b) leaks thinking-out-loud /
+// self-correction into a field the prompt forbids it in, or (c) emits a
+// figure-dependent or cut-off statement. A rejected problem is dropped and
+// refilled by the route's regenerate-the-deficit loop, so these never block
+// generation — they just filter bad items.
+
+import type { Problem, Anchor } from "@/lib/types";
+
+// --- Answer guard -----------------------------------------------------------
+
+// Reject problems the model didn't actually solve (placeholder answers) or whose
+// answer violates the competition's answer format.
+export function answerOk(p: Problem, competition?: string): boolean {
+  const a = (p.answer || "").trim();
+  if (!a) return false;
+  if (/\b(tbd|tba|todo|n\/?a|hint|see solution|to be determined|placeholder|unknown)\b/i.test(`${p.answer} ${p.solution}`))
+    return false;
+  if (/^\?+$/.test(a)) return false;
+  // No multiple-choice option letters as the answer (we generate free-response).
+  // "(C)" is never valid; a bare "C" is rejected for AMC (where MC leaks) but not
+  // physics, where a lone symbol like energy E can be a legitimate answer.
+  if (/^\(\s*[A-E]\s*\)$/.test(a)) return false;
+  if ((competition === "AMC10" || competition === "AMC12") && /^[A-E]$/.test(a)) return false;
+  // Only AIME's answer format is unambiguous enough to hard-enforce (integer
+  // 0–999). F=ma may be a letter A–E OR a value with units; AMC varies — for
+  // those, a real non-placeholder answer is enough (format is the prompt's job).
+  if (competition === "AIME") return /^\d{1,3}$/.test(a) && Number(a) <= 999;
+  return true;
+}
+
+// --- Statement guard --------------------------------------------------------
+
+// Self-correction / thinking-out-loud inside the problem field (the "Actually
+// disregard — here is the problem:" failure).
+const META_PATTERNS = [
+  /\bdisregard\b/i,
+  /\b(here\s+is|here's)\s+(the|a|another|your|an)\s+(actual\s+|real\s+|correct\s+|clean\s+|new\s+|better\s+)?(problem|question|one)\b/i,
+  /\blet me (restate|rephrase|rewrite|try|redo|give)\b/i,
+  /\b(i'?ll|i will|let me) (give|provide|write|offer)\b.*\b(instead|problem)\b/i,
+  /\b(scratch that|never ?mind|on second thought|my mistake|oops|wait,)\b/i,
+  /\bactually,?\s+(disregard|ignore|the|let|here|i)\b/i,
+  /\b(ignore|forget) (the|that|this|everything) (above|prior|previous|earlier)\b/i,
+  /\bsee (the )?solution\b/i,
+];
+// "figure"/"diagram" are never legitimate in a text-only problem. "graph" is
+// excluded — it's a valid math term (graph of a function) and would false-positive.
+const FIGURE_PATTERNS = [
+  /\b(figure|diagram|picture|illustration)\b/i,
+  /\b(shown|pictured|depicted|illustrated|drawn)\s+(above|below|here|to the (left|right))\b/i,
+  /\bas shown\b/i,
+];
+
+// Reject malformed problem STATEMENTS the prompt tells the model never to emit:
+// self-correction, figure dependence, cut-off statements, and answer-choice lists.
+export function problemOk(p: Problem): boolean {
+  const text = (p.problem || "").trim();
+  if (!text) return false;
+  // Cut-off / abandoned statement: ends in an ellipsis (a real problem ends with
+  // proper punctuation; "1, 2, ..." mid-statement is fine, a trailing one is not).
+  if (/(\.\.\.|…)\s*$/.test(text)) return false;
+  if (META_PATTERNS.some((re) => re.test(text))) return false;
+  if (FIGURE_PATTERNS.some((re) => re.test(text))) return false;
+  // Multiple-choice option list — we generate free-response only. Collect the
+  // distinct parenthesized letters (also matches \textbf{(A)} etc., which contain
+  // "(A)"); 4+ of {A..E} is an answer-choice list, not incidental labeling.
+  const optionLetters = new Set(
+    (text.match(/\(\s*([A-E])\s*\)/g) || []).map((m) => m.replace(/[^A-E]/g, ""))
+  );
+  if (optionLetters.size >= 4) return false;
+  return true;
+}
+
+// --- Solution guard ---------------------------------------------------------
+
+// The prompt forbids backtracking / self-correction narration in the solution
+// ("recompute", "wait, let me recheck", "that's wrong"), but the model still
+// leaks it. We can't fix the wording in place safely (the bad line may carry the
+// final number), so a leaked solution drops the whole problem and the deficit
+// loop regenerates a clean one. Only the clear self-correction verbs and phrases
+// are matched — bare "verify"/"actually" are left out to avoid false-positives.
+//
+// This is the single source of truth for the self-correction vocabulary on the
+// guard side; the generation prompt forbids the same phrases in prose.
+const SOLUTION_BACKTRACK = [
+  /\brecomput\w*/i, // recompute / recomputing / recomputed
+  /\brecalculat\w*/i, // recalculate / recalculating
+  /\brecheck\w*/i, // recheck / rechecking
+  /\bdouble-?check\w*/i,
+  /\b(scratch that|never ?mind|on second thought|my mistake|oops)\b/i,
+  /\bthat'?s wrong\b/i,
+  /\bi made (an|a) (error|mistake)\b/i,
+  /\bwait,/i,
+  /\blet me (recompute|recalculate|recheck|redo|try|verify|check|confirm|reconsider)\b/i,
+];
+export function solutionOk(p: Problem): boolean {
+  return !SOLUTION_BACKTRACK.some((re) => re.test(p.solution || ""));
+}
+
+// Adapt-path equivalent of solutionOk: the heavy pass emits a `solutionSketch`
+// rather than a full `solution`, so the same backtracking vocabulary is checked
+// against the sketch field. Reuses SOLUTION_BACKTRACK (single source of truth).
+export function solutionSketchOk(p: Problem): boolean {
+  return !SOLUTION_BACKTRACK.some((re) => re.test(p.solutionSketch || ""));
+}
+
+// --- Seed-similarity guard (variant/hard tier only) -------------------------
+
+// Similarity thresholds — kept lenient so the guard doesn't starve generation.
+// A variant is rejected only when it's clearly too close to a seed on either axis.
+const SEED_NUMERIC_JACCARD_THRESHOLD = 0.5;
+const SEED_NUMERIC_OVERLAP_THRESHOLD = 3; // shared non-trivial integers
+const SEED_LEXICAL_JACCARD_THRESHOLD = 0.45;
+
+// Extract integer/decimal tokens from a string, excluding trivial values (0, 1, 2).
+function extractNumbers(text: string): number[] {
+  const nums: number[] = [];
+  for (const m of text.matchAll(/\b(\d+(?:\.\d+)?)\b/g)) {
+    const n = Number(m[1]);
+    if (n > 2) nums.push(n);
+  }
+  return nums;
+}
+
+// Jaccard similarity between two arrays treated as multisets → sets for speed.
+function jaccardSets(a: number[] | string[], b: number[] | string[]): number {
+  const sa = new Set(a as (number | string)[]);
+  const sb = new Set(b as (number | string)[]);
+  let inter = 0;
+  for (const x of sa) if (sb.has(x)) inter++;
+  const union = sa.size + sb.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
+// Tokenize a statement into content words (strip LaTeX commands and stopwords).
+function contentWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/\$\$[\s\S]*?\$\$/g, " ") // strip display math
+    .replace(/\$[^$]*?\$/g, " ")        // strip inline math
+    .replace(/\\[a-zA-Z]+/g, " ")       // strip LaTeX commands
+    .replace(/[^a-z0-9 ]/g, " ")
+    .split(/\s+/)
+    .filter(
+      (w) =>
+        w.length > 2 &&
+        !/^(the|and|for|are|was|that|with|from|this|into|have|each|find|let|such|all|its|can|not|any|but)$/.test(
+          w
+        )
+    );
+}
+
+// Reject a variant that's too recognizable as its seed, so the student can
+// still do the real AIME problem later. Only applied on the variant (hard) path.
+// Checks each variant against every seed (we don't know which seed produced which
+// variant) and rejects on either axis vs. any seed. Returns a short diagnostic
+// (which seed + which axis + the value) when too similar, else null — logging the
+// axis distinguishes a true echo (reused numbers) from over-strict lexical drops.
+export function tooSimilarToSeed(p: Problem, seeds: Anchor[]): string | null {
+  const variantNums = extractNumbers(p.problem);
+  const variantWords = contentWords(p.problem);
+
+  for (const seed of seeds) {
+    const seedNums = extractNumbers(seed.statement);
+    const seedWords = contentWords(seed.statement);
+    const label = `${seed.source}${seed.number != null ? `#${seed.number}` : ""}`;
+
+    // Numeric overlap axis
+    const sharedNums = variantNums.filter((n) => seedNums.includes(n)).length;
+    if (sharedNums >= SEED_NUMERIC_OVERLAP_THRESHOLD) return `${label} shared-numbers=${sharedNums}`;
+    const numJaccard = jaccardSets(variantNums, seedNums);
+    if (numJaccard > SEED_NUMERIC_JACCARD_THRESHOLD) return `${label} numeric-jaccard=${numJaccard.toFixed(2)}`;
+
+    // Lexical overlap axis
+    const lexJaccard = jaccardSets(variantWords, seedWords);
+    if (lexJaccard > SEED_LEXICAL_JACCARD_THRESHOLD) return `${label} lexical-jaccard=${lexJaccard.toFixed(2)}`;
+  }
+  return null;
+}

@@ -1,47 +1,120 @@
 import { google } from "googleapis";
-import { getRefreshToken } from "./gcal-token";
+import { Prisma } from "@prisma/client";
 
 // One-way mirror: our DB → Google Calendar. Never the reverse. Every caller
 // wraps these in try/catch so a Google failure never blocks a DB write.
+//
+// This module is a pure Google Calendar adapter: it makes Calendar API calls and
+// maps DB-shaped rows in, but never touches Prisma itself. Routes own all DB
+// reads/writes and hand shaped data in (see SESSION_FOR_GCAL_SELECT / the
+// remap return of propagateMeetLink). Calendar is per-user: every CRUD takes a
+// GCalAccount (the user's refresh token + target calendar), loaded from the DB by
+// the route via lib/gcal-account.ts. App OAuth client id/secret/redirect stay env.
+
+// A single user's Google Calendar credentials. calendarId is the calendar to
+// mirror into ("primary" when the user hasn't picked a dedicated one).
+export type GCalAccount = { refreshToken: string; calendarId: string };
+
+// Thrown by generateMeetLink when Google hasn't populated the conference link yet
+// — a typed signal so callers can show a "try again" message without matching on
+// free-text error strings.
+export class MeetStillGeneratingError extends Error {
+  constructor() {
+    super("Meet link still generating — try again in a moment.");
+    this.name = "MeetStillGeneratingError";
+  }
+}
 
 export type SessionForGCal = {
   id: string;
   start: Date;
   durationMin: number;
   topic: string;
-  student: { name: string };
+  paid: boolean;
+  meetLink: string | null;
+  student: { name: string; level: string };
 };
+
+// The Prisma select every route uses to load a session for the GCal mirror, and
+// the mapper that flattens such a row into SessionForGCal. Shared so the field
+// set and the mapping stay in lock-step across all sync paths (create, patch,
+// per-session retry, bulk sync-all).
+export const SESSION_FOR_GCAL_SELECT = {
+  id: true,
+  start: true,
+  durationMin: true,
+  topic: true,
+  paid: true,
+  googleEventId: true,
+  student: { select: { name: true, level: true, meetLink: true } },
+} satisfies Prisma.SessionSelect;
+
+export function toSessionForGCal(row: {
+  id: string;
+  start: Date;
+  durationMin: number;
+  topic: string;
+  paid: boolean;
+  student: { name: string; level: string; meetLink: string | null };
+}): SessionForGCal {
+  return {
+    id: row.id,
+    start: row.start,
+    durationMin: row.durationMin,
+    topic: row.topic,
+    paid: row.paid,
+    meetLink: row.student.meetLink,
+    student: { name: row.student.name, level: row.student.level },
+  };
+}
+
+// Google Calendar colorIds: 10 = Basil (green), 6 = Tangerine (orange).
+// Paid sessions show green, unpaid show orange — matches the calendar chips.
+const COLOR_PAID = "10";
+const COLOR_UNPAID = "6";
 
 const SCOPES = ["https://www.googleapis.com/auth/calendar.events"];
 
-function getOAuthClient() {
-  const client = new google.auth.OAuth2(
+// App-level OAuth client (no user credentials) — used only for the OAuth flow
+// (auth URL + code exchange). Client id/secret/redirect are app-wide env.
+function getAppOAuthClient() {
+  return new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
     process.env.GOOGLE_REDIRECT_URI
   );
-  const refresh = getRefreshToken();
-  if (refresh) client.setCredentials({ refresh_token: refresh });
-  return client;
 }
 
-// calendar.events scope can't create calendars, so we target a calendar the
-// user designates (GOOGLE_TUTORING_CALENDAR_ID) or fall back to primary.
-function getCalendarId(): string {
-  return process.env.GOOGLE_TUTORING_CALENDAR_ID || "primary";
-}
-
-function calendar() {
-  return google.calendar({ version: "v3", auth: getOAuthClient() });
+// Calendar clients are cached per refresh token so sync loops don't rebuild the
+// OAuth client + service on every event. Keyed by the user's refresh token, which
+// is stable for that user; a Map keeps one entry per connected user.
+const _calendars = new Map<string, ReturnType<typeof google.calendar>>();
+function calendar(account: GCalAccount) {
+  let cal = _calendars.get(account.refreshToken);
+  if (!cal) {
+    const client = getAppOAuthClient();
+    client.setCredentials({ refresh_token: account.refreshToken });
+    cal = google.calendar({ version: "v3", auth: client });
+    _calendars.set(account.refreshToken, cal);
+  }
+  return cal;
 }
 
 function eventBody(session: SessionForGCal) {
   const end = new Date(session.start.getTime() + session.durationMin * 60 * 1000);
+  // Append the Meet link to the description as a reliable baseline so it is
+  // always visible on the event even if the conferenceData approach is rejected.
+  const descParts = [
+    session.topic ? `Topic: ${session.topic}` : null,
+    session.student.level ? `Level: ${session.student.level}` : null,
+    session.meetLink ? `Meet: ${session.meetLink}` : null,
+  ].filter(Boolean);
   return {
-    summary: session.topic ? `${session.student.name} — ${session.topic}` : session.student.name,
+    summary: session.student.name,
     start: { dateTime: session.start.toISOString() },
     end: { dateTime: end.toISOString() },
-    description: session.topic || "",
+    description: descParts.join("\n\n"),
+    colorId: session.paid ? COLOR_PAID : COLOR_UNPAID,
     extendedProperties: { private: { sessionId: session.id } },
   };
 }
@@ -49,7 +122,7 @@ function eventBody(session: SessionForGCal) {
 // --- OAuth flow helpers ---
 
 export function getAuthUrl(): string {
-  return getOAuthClient().generateAuthUrl({
+  return getAppOAuthClient().generateAuthUrl({
     access_type: "offline",
     prompt: "consent", // forces refresh_token even on repeat authorization
     scope: SCOPES,
@@ -57,15 +130,15 @@ export function getAuthUrl(): string {
 }
 
 export async function exchangeCode(code: string) {
-  const { tokens } = await getOAuthClient().getToken(code);
+  const { tokens } = await getAppOAuthClient().getToken(code);
   return tokens;
 }
 
-// --- Event CRUD ---
+// --- Event CRUD --- (each takes the acting user's GCalAccount)
 
-export async function createEvent(session: SessionForGCal): Promise<string> {
-  const res = await calendar().events.insert({
-    calendarId: getCalendarId(),
+export async function createEvent(account: GCalAccount, session: SessionForGCal): Promise<string> {
+  const res = await calendar(account).events.insert({
+    calendarId: account.calendarId,
     requestBody: eventBody(session),
   });
   const id = res.data.id;
@@ -81,22 +154,23 @@ export async function createEvent(session: SessionForGCal): Promise<string> {
 // (and a hard-deleted event 404s). In both cases we re-create so the mirror
 // self-heals instead of pointing at a phantom id forever.
 export async function updateEvent(
+  account: GCalAccount,
   googleEventId: string,
   session: SessionForGCal
 ): Promise<string> {
   try {
-    const res = await calendar().events.patch({
-      calendarId: getCalendarId(),
+    const res = await calendar(account).events.patch({
+      calendarId: account.calendarId,
       eventId: googleEventId,
       requestBody: eventBody(session),
     });
     if (res.data.status === "cancelled") {
       // Patched a cleared event — it stays cancelled and invisible; recreate.
-      return createEvent(session);
+      return createEvent(account, session);
     }
     return googleEventId;
   } catch (e) {
-    if (isEventGone(e)) return createEvent(session);
+    if (isEventGone(e)) return createEvent(account, session);
     throw e;
   }
 }
@@ -109,9 +183,112 @@ function isEventGone(e: unknown): boolean {
   return status === 404 || status === 410 || status === "404" || status === "410";
 }
 
-export async function deleteEvent(googleEventId: string): Promise<void> {
-  await calendar().events.delete({
-    calendarId: getCalendarId(),
+export async function deleteEvent(account: GCalAccount, googleEventId: string): Promise<void> {
+  await calendar(account).events.delete({
+    calendarId: account.calendarId,
     eventId: googleEventId,
   });
+}
+
+// --- Meet link helpers ---
+
+// generateMeetLink: asks Google to attach a new Meet conference to an existing
+// calendar event. Returns the hangout link or throws if Google hasn't populated
+// it yet (the caller should surface a "try again" message — it usually resolves
+// within a second on a retry).
+export async function generateMeetLink(account: GCalAccount, googleEventId: string): Promise<string> {
+  const res = await calendar(account).events.patch({
+    calendarId: account.calendarId,
+    eventId: googleEventId,
+    conferenceDataVersion: 1,
+    requestBody: {
+      conferenceData: {
+        createRequest: {
+          requestId: `meet-${googleEventId}-${Date.now()}`,
+          conferenceSolutionKey: { type: "hangoutsMeet" },
+        },
+      },
+    },
+  });
+
+  // Google may return the link as hangoutLink or inside conferenceData entries.
+  const link =
+    res.data.hangoutLink ??
+    res.data.conferenceData?.entryPoints?.find(
+      (e) => e.entryPointType === "video"
+    )?.uri;
+
+  if (!link) {
+    // Conference creation is still pending — caller should retry.
+    throw new MeetStillGeneratingError();
+  }
+  return link;
+}
+
+// attachMeetLink: best-effort patch that writes a manual Meet URL into the event
+// as structured conferenceData. A Google rejection (e.g. workspace restriction)
+// is swallowed — the link already appears in the event description via eventBody.
+export async function attachMeetLink(
+  account: GCalAccount,
+  googleEventId: string,
+  meetLink: string
+): Promise<void> {
+  // Derive a stable conference id from the event id + a hash of the link so
+  // repeated patches don't create duplicate conference entries.
+  const conferenceId = `manual-${googleEventId}`;
+  try {
+    await calendar(account).events.patch({
+      calendarId: account.calendarId,
+      eventId: googleEventId,
+      conferenceDataVersion: 1,
+      requestBody: {
+        conferenceData: {
+          conferenceSolution: { key: { type: "hangoutsMeet" } },
+          conferenceId,
+          entryPoints: [
+            {
+              entryPointType: "video",
+              uri: meetLink,
+            },
+          ],
+        },
+      },
+    });
+  } catch (e) {
+    // Non-blocking: the link is already in the event description.
+    console.error("GCal attachMeetLink failed (non-blocking):", e);
+  }
+}
+
+// A session row loaded with SESSION_FOR_GCAL_SELECT (includes googleEventId).
+type SessionRowForGCal = Prisma.SessionGetPayload<{ select: typeof SESSION_FOR_GCAL_SELECT }>;
+
+// propagateMeetLink: mirrors a meetLink onto every passed synced GCal event. Run
+// after a student's meetLink changes (via generate or manual edit). Sequential on
+// purpose — small volume, rate-limit friendly. Per-event failures are swallowed;
+// the link will show up on the next sync or retry. Pure: the caller loads the rows
+// (filtered to googleEventId != null) and persists the returned event-id remaps —
+// this module never touches Prisma.
+export async function propagateMeetLink(
+  account: GCalAccount,
+  rows: SessionRowForGCal[],
+  meetLink: string | null
+): Promise<Array<{ id: string; newEventId: string }>> {
+  const remaps: Array<{ id: string; newEventId: string }> = [];
+  for (const row of rows) {
+    if (!row.googleEventId) continue;
+    const eventId = row.googleEventId;
+    try {
+      // Reuse the shared mapper, but override meetLink with the new value being
+      // propagated (the caller's param is the source of truth for this run).
+      const newId = await updateEvent(account, eventId, { ...toSessionForGCal(row), meetLink });
+      // updateEvent recreates a deleted event and returns a fresh id — the caller
+      // must persist these so the mirror stays linked.
+      if (newId !== eventId) remaps.push({ id: row.id, newEventId: newId });
+      if (meetLink) await attachMeetLink(account, newId, meetLink);
+    } catch (e) {
+      console.error(`GCal propagateMeetLink failed for session ${row.id} (non-blocking):`, e);
+    }
+  }
+  return remaps;
 }

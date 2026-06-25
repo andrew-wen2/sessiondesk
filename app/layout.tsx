@@ -2,22 +2,28 @@ import type { Metadata } from "next";
 import "./globals.css";
 import "katex/dist/katex.min.css";
 import Nav from "@/components/Nav";
-import { isGcalConfigured } from "@/lib/gcal-token";
+import { getCurrentUserId } from "@/lib/session";
+import { isGcalAppConfigured, isGcalConnected } from "@/lib/gcal-account";
 
 export const metadata: Metadata = {
   title: "Session Desk",
-  description: "Single-tutor session manager",
+  description: "Tutoring session manager",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  // Per-user Calendar state for the nav. No user (login/register) → not connected;
+  // the Nav hides its links on those routes anyway.
+  const userId = await getCurrentUserId();
+  const gcalConnected = userId ? await isGcalConnected(userId) : false;
+
   return (
     <html lang="en">
       <body className="bg-gray-50 text-gray-900 antialiased">
-        <Nav gcalConnected={isGcalConfigured()} />
+        <Nav gcalAvailable={isGcalAppConfigured()} gcalConnected={gcalConnected} />
         <main className="mx-auto max-w-4xl px-4 py-8">{children}</main>
       </body>
     </html>

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { requireUserId } from "@/lib/session";
+import { isGcalConnected } from "@/lib/gcal-account";
 import StudentDetail, { type StudentDetailData } from "@/components/StudentDetail";
 import StudentNameEditor from "@/components/StudentNameEditor";
 import LearningHistory, { type HistoryItem } from "@/components/LearningHistory";
@@ -14,10 +16,11 @@ export default async function StudentPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const userId = await requireUserId();
 
   const row = await prisma.student
-    .findUniqueOrThrow({
-      where: { id },
+    .findFirstOrThrow({
+      where: { id, userId },
       include: {
         sessions: {
           where: { topic: { not: "" } },
@@ -36,6 +39,7 @@ export default async function StudentPage({
     level: row.level,
     rate: row.rate,
     notes: row.notes ?? "",
+    meetLink: row.meetLink ?? null,
   };
 
   const history: HistoryItem[] = row.sessions.map((s) => ({
@@ -59,7 +63,7 @@ export default async function StudentPage({
         </Link>
       </div>
 
-      <StudentDetail student={student} />
+      <StudentDetail student={student} gcalConfigured={await isGcalConnected(userId)} />
 
       <section>
         <h2 className="text-sm font-semibold text-gray-500">Learning history</h2>

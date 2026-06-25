@@ -1,28 +1,33 @@
 "use client";
 
+import { useMemo } from "react";
 import { InlineMath, BlockMath } from "react-katex";
+import { splitMath } from "@/lib/math-segments";
 
 // Split a string into prose and math segments ($$...$$ display, $...$ inline)
-// and render each. Malformed LaTeX falls back to the raw source rather than
-// crashing the whole problem display.
+// and render each. The split is escape-aware (\$ is a literal dollar, not a
+// delimiter — see lib/math-segments.ts). Malformed LaTeX falls back to the raw
+// source rather than crashing the whole problem display.
 export default function MathText({ text }: { text: string }) {
-  const parts = text.split(/(\$\$[\s\S]*?\$\$|\$[^$]*?\$)/g);
+  // splitMath is an O(n) escape-aware walk over the string; memoize so it only
+  // re-runs when the text changes, not on every parent re-render.
+  const segments = useMemo(() => splitMath(text), [text]);
   return (
     <>
-      {parts.map((part, i) => {
-        if (part.startsWith("$$") && part.endsWith("$$") && part.length >= 4) {
-          const math = part.slice(2, -2);
+      {segments.map((seg, i) => {
+        if (seg.type === "block") {
           return (
             <span key={i} className="block overflow-x-auto">
-              <BlockMath math={math} renderError={() => <code>{part}</code>} />
+              <BlockMath math={seg.content} renderError={() => <code>{`$$${seg.content}$$`}</code>} />
             </span>
           );
         }
-        if (part.startsWith("$") && part.endsWith("$") && part.length >= 2) {
-          const math = part.slice(1, -1);
-          return <InlineMath key={i} math={math} renderError={() => <code>{part}</code>} />;
+        if (seg.type === "inline") {
+          return (
+            <InlineMath key={i} math={seg.content} renderError={() => <code>{`$${seg.content}$`}</code>} />
+          );
         }
-        return <span key={i}>{part}</span>;
+        return <span key={i}>{seg.content}</span>;
       })}
     </>
   );

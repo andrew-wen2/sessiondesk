@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUserId } from "@/lib/session";
+import { parseNonNegInt } from "@/lib/validation";
 
-// GET /api/students — all students, sorted by name (for the combobox).
+// GET /api/students — all of the current user's students, sorted by name (combobox).
 export async function GET() {
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+
     // Combobox only needs id/name/rate/level — skip notes, timestamps.
     const students = await prisma.student.findMany({
+      where: { userId },
       orderBy: { name: "asc" },
       select: { id: true, name: true, rate: true, level: true },
     });
@@ -22,21 +28,24 @@ export async function GET() {
 // in later from the Students view.
 export async function POST(request: Request) {
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+
     const body = await request.json();
     const name = typeof body.name === "string" ? body.name.trim() : "";
-    const rate = Number(body.rate);
 
     if (!name) {
       return NextResponse.json({ error: "Student name is required." }, { status: 400 });
     }
-    if (!Number.isFinite(rate) || rate < 0) {
+    const rate = parseNonNegInt(body.rate);
+    if (!rate.ok) {
       return NextResponse.json({ error: "Rate must be a non-negative number." }, { status: 400 });
     }
 
     // Return only id — the caller (AddSessionModal) reads student.id then POSTs
     // the session; it doesn't need the full student row.
     const student = await prisma.student.create({
-      data: { name, rate: Math.round(rate), level: "", notes: null },
+      data: { name, rate: rate.value, level: "", notes: null, userId },
       select: { id: true },
     });
     return NextResponse.json(student, { status: 201 });

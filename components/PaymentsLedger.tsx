@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { formatSessionDate } from "@/lib/format";
 import MastheadStats from "./MastheadStats";
 
 export type LedgerSession = {
@@ -48,10 +49,12 @@ export default function PaymentsLedger({
     setPaid((p) => ({ ...p, [id]: next })); // optimistic
     setErrorId(null);
     try {
-      const res = await fetch("/api/payments", {
+      // Route through the session PATCH so the paid→GCal color mirror fires
+      // exactly as it does from Session detail — one paid path, no divergence.
+      const res = await fetch(`/api/sessions/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: id, paid: next }),
+        body: JSON.stringify({ paid: next }),
       });
       if (!res.ok) throw new Error();
     } catch {
@@ -86,11 +89,7 @@ export default function PaymentsLedger({
                 </div>
                 <ul className="divide-y divide-gray-100">
                   {g.sessions.map((s) => {
-                    const date = new Date(s.start).toLocaleDateString("en-US", {
-                      weekday: "short",
-                      month: "short",
-                      day: "numeric",
-                    });
+                    const date = formatSessionDate(s.start);
                     return (
                       <li key={s.id} className="flex items-center gap-3 px-4 py-2 text-sm">
                         <Link href={`/sessions/${s.id}`} className="w-28 shrink-0 font-mono text-xs text-gray-500 hover:underline">

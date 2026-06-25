@@ -1,24 +1,21 @@
 import katex from "katex";
 import type { Problem } from "@/lib/types";
+import { splitMath } from "@/lib/math-segments";
+import { pad } from "@/lib/format";
 
-// Render a string that may contain $...$ / $$...$$ math into safe HTML.
-// Mirrors the segment split used by components/MathText.tsx so the PDF
-// matches what's shown on screen; malformed LaTeX falls back to raw source.
+// Render a string that may contain $...$ / $$...$$ math into safe HTML. Uses the
+// same escape-aware split as components/MathText.tsx so the PDF matches what's
+// shown on screen; malformed LaTeX falls back to raw source.
 function renderMath(text: string): string {
-  const parts = text.split(/(\$\$[\s\S]*?\$\$|\$[^$]*?\$)/g);
-  return parts
-    .map((part) => {
+  return splitMath(text)
+    .map((seg) => {
+      if (seg.type === "text") return escapeHtml(seg.content);
       try {
-        if (part.startsWith("$$") && part.endsWith("$$") && part.length >= 4) {
-          return katex.renderToString(part.slice(2, -2), { displayMode: true });
-        }
-        if (part.startsWith("$") && part.endsWith("$") && part.length >= 2) {
-          return katex.renderToString(part.slice(1, -1), { displayMode: false });
-        }
+        return katex.renderToString(seg.content, { displayMode: seg.type === "block" });
       } catch {
-        return escapeHtml(part);
+        const d = seg.type === "block" ? "$$" : "$";
+        return escapeHtml(`${d}${seg.content}${d}`);
       }
-      return escapeHtml(part);
     })
     .join("");
 }
@@ -28,10 +25,6 @@ function escapeHtml(s: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-}
-
-function pad(n: number) {
-  return String(n).padStart(2, "0");
 }
 
 // MM-DD-studentname (no extension; the browser appends .pdf when saving).

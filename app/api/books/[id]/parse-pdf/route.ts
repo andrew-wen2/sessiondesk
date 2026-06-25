@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { PDFParse } from "pdf-parse";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUserId } from "@/lib/session";
 import { formatChapters } from "@/lib/book-chapters";
 
 // POST /api/books/[id]/parse-pdf — server-only. Fills book.contents with a clean,
@@ -148,8 +149,13 @@ function chaptersFromMessage(message: {
   return clean;
 }
 
-function generationModel(): string {
-  return process.env.GENERATION_MODEL ?? "claude-opus-4-8";
+// Chapter/TOC extraction is structural, not hard reasoning — Opus is overkill and
+// this is the most expensive call per invocation (full-book text input). Default
+// to the cheaper Sonnet (1M context, so it still fits the 700K-char text path) and
+// allow PARSE_MODEL to override (e.g. claude-haiku-4-5 if MAX_TEXT_CHARS is lowered
+// to fit Haiku's 200K context). Independent of GENERATION_MODEL by design.
+function parseModel(): string {
+  return process.env.PARSE_MODEL ?? "claude-sonnet-4-6";
 }
 
 // pdf-parse emits a "-- N of M --" marker per page even for scanned PDFs with no
@@ -173,7 +179,7 @@ function stripPdfParseArtifacts(text: string): string {
 async function chaptersFromText(client: Anthropic, text: string): Promise<Chapter[]> {
   const snippet = text.slice(0, MAX_TEXT_CHARS);
   const stream = client.messages.stream({
-    model: generationModel(),
+    model: parseModel(),
     max_tokens: 32000,
     tools: [CHAPTERS_TOOL],
     tool_choice: { type: "tool", name: "emit_chapters" },
@@ -203,7 +209,7 @@ async function chaptersFromVision(client: Anthropic, buf: Buffer): Promise<Chapt
   // by the pdfs-2024-09-25 beta header. Claude renders each page to an image.
   const message = await client.beta.messages.create({
     betas: ["pdfs-2024-09-25"],
-    model: generationModel(),
+    model: parseModel(),
     max_tokens: 8192,
     tools: [CHAPTERS_TOOL as Anthropic.Beta.Messages.BetaTool],
     tool_choice: { type: "tool", name: "emit_chapters" },
@@ -243,7 +249,10 @@ export async function POST(
       );
     }
 
-    const book = await prisma.book.findUnique({ where: { id }, select: { id: true } });
+    const userId = await getCurrentUserId();
+    if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+
+    const book = await prisma.book.findFirst({ where: { id, userId }, select: { id: true } });
     if (!book) {
       return NextResponse.json({ error: "Book not found." }, { status: 404 });
     }

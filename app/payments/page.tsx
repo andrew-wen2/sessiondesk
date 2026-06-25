@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { requireUserId } from "@/lib/session";
 import PaymentsLedger, { type LedgerGroup } from "@/components/PaymentsLedger";
 
 // Reads live DB data — render on demand.
@@ -18,9 +19,11 @@ function getWeekBounds() {
 // Payments ledger. Server component: loads all sessions, groups by student in
 // app code, computes masthead stats.
 export default async function PaymentsPage() {
+  const userId = await requireUserId();
   // The ledger only renders id/start/topic/amount/paid and student name/id.
   // Skip problems (heavy Json), homework, googleEventId, and other unused fields.
   const sessions = await prisma.session.findMany({
+    where: { userId },
     select: {
       id: true,
       studentId: true,

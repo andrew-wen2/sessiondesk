@@ -1,15 +1,20 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUserId } from "@/lib/session";
 
-// GET /api/books/[id] — single book.
+// GET /api/books/[id] — single book (must belong to the current user).
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
   try {
-    const book = await prisma.book.findUniqueOrThrow({ where: { id } });
+    const userId = await getCurrentUserId();
+    if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+
+    const book = await prisma.book.findFirst({ where: { id, userId } });
+    if (!book) return NextResponse.json({ error: "Book not found." }, { status: 404 });
     return NextResponse.json(book);
   } catch (e) {
     console.error("[/api/books/[id] GET]", e);
@@ -24,6 +29,12 @@ export async function PATCH(
 ) {
   const { id } = await params;
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+
+    const owned = await prisma.book.findFirst({ where: { id, userId }, select: { id: true } });
+    if (!owned) return NextResponse.json({ error: "Book not found." }, { status: 404 });
+
     const body = await request.json();
     const data: Prisma.BookUpdateInput = {};
 
@@ -57,6 +68,12 @@ export async function DELETE(
 ) {
   const { id } = await params;
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+
+    const owned = await prisma.book.findFirst({ where: { id, userId }, select: { id: true } });
+    if (!owned) return NextResponse.json({ error: "Book not found." }, { status: 404 });
+
     await prisma.book.delete({ where: { id } });
     return NextResponse.json({ deleted: true });
   } catch (e) {

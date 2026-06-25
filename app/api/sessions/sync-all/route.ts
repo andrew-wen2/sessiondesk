@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { createEvent, updateEvent } from "@/lib/gcal";
-import { isGcalConfigured } from "@/lib/gcal-token";
+import { getCurrentUserId } from "@/lib/session";
+import { createEvent, updateEvent, toSessionForGCal, SESSION_FOR_GCAL_SELECT } from "@/lib/gcal";
+import { getGcalAccount } from "@/lib/gcal-account";
 
 // POST /api/sessions/sync-all — reconcile the DB → GCal mirror for one month.
 // Backfills events for sessions whose googleEventId is null and patches the
@@ -11,7 +12,11 @@ import { isGcalConfigured } from "@/lib/gcal-token";
 // are counted, never thrown, so one bad event can't abort the batch.
 export async function POST(request: Request) {
   try {
-    if (!isGcalConfigured()) {
+    const userId = await getCurrentUserId();
+    if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+
+    const account = await getGcalAccount(userId);
+    if (!account) {
       return NextResponse.json(
         { error: "Calendar not connected — connect Google Calendar first." },
         { status: 400 }
@@ -30,15 +35,8 @@ export async function POST(request: Request) {
     const end = new Date(year, mon, 1);
 
     const sessions = await prisma.session.findMany({
-      where: { start: { gte: start, lt: end } },
-      select: {
-        id: true,
-        start: true,
-        durationMin: true,
-        topic: true,
-        googleEventId: true,
-        student: { select: { name: true } },
-      },
+      where: { userId, start: { gte: start, lt: end } },
+      select: SESSION_FOR_GCAL_SELECT,
       orderBy: { start: "asc" },
     });
 
@@ -49,19 +47,13 @@ export async function POST(request: Request) {
     // Sequential on purpose: the volume is tiny and serial avoids bursting the
     // Google rate limit.
     for (const s of sessions) {
-      const forGcal = {
-        id: s.id,
-        start: s.start,
-        durationMin: s.durationMin,
-        topic: s.topic,
-        student: { name: s.student.name },
-      };
+      const forGcal = toSessionForGCal(s);
       try {
         if (s.googleEventId) {
           // updateEvent self-heals: if the event was cleared/deleted on Google
           // it recreates it and returns a new id we must persist. Counts as a
           // create when recreated, a patch when updated in place.
-          const newId = await updateEvent(s.googleEventId, forGcal);
+          const newId = await updateEvent(account, s.googleEventId, forGcal);
           if (newId !== s.googleEventId) {
             await prisma.session.update({ where: { id: s.id }, data: { googleEventId: newId } });
             created++;
@@ -69,7 +61,7 @@ export async function POST(request: Request) {
             patched++;
           }
         } else {
-          const googleEventId = await createEvent(forGcal);
+          const googleEventId = await createEvent(account, forGcal);
           await prisma.session.update({ where: { id: s.id }, data: { googleEventId } });
           created++;
         }

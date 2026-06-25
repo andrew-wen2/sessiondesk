@@ -4,26 +4,24 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { BookOption } from "@/lib/types";
+import { pad, formatSessionDate } from "@/lib/format";
+import { SaveIndicator, type SaveStatus } from "./SaveIndicator";
 import ProblemSet, { type Problem } from "./ProblemSet";
 import { downloadProblemsPdf } from "@/lib/download-problems";
 import { startGeneration, useGeneration } from "@/lib/generation-store";
 
 const DURATIONS = [30, 45, 60, 90, 120];
 
-function pad(n: number) {
-  return String(n).padStart(2, "0");
-}
-
 export type SessionDetailData = {
   id: string;
   start: string; // ISO
   durationMin: number;
   topic: string;
-  homework: string;
   paid: boolean;
   amount: number;
   problems: Problem[] | null;
   googleEventId: string | null;
+  meetLink: string | null;
   book: { id: string; title: string } | null;
   student: {
     id: string;
@@ -32,25 +30,13 @@ export type SessionDetailData = {
   };
 };
 
-type SaveStatus = "idle" | "saving" | "saved" | "error";
-
-function SaveIndicator({ status, onRetry }: { status: SaveStatus; onRetry: () => void }) {
-  if (status === "saving") return <span className="ml-2 text-xs text-gray-400">Saving…</span>;
-  if (status === "saved") return <span className="ml-2 text-xs text-gray-400">Saved</span>;
-  if (status === "error")
-    return (
-      <button onClick={onRetry} className="ml-2 text-xs text-red-600 hover:underline">
-        Save failed — retry
-      </button>
-    );
-  return null;
-}
-
 export default function SessionDetail({
   session,
+  books: initialBooks,
   gcalConfigured = false,
 }: {
   session: SessionDetailData;
+  books: BookOption[];
   gcalConfigured?: boolean;
 }) {
   const { id } = session;
@@ -79,15 +65,17 @@ export default function SessionDetail({
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
 
+  // Meet link — sourced from the student; read-only display on this page.
+  // Generate/edit/remove lives on the student profile.
+  const meetLink = session.meetLink;
+
   const [topic, setTopic] = useState(session.topic);
-  const [homework, setHomework] = useState(session.homework);
   const [topicStatus, setTopicStatus] = useState<SaveStatus>("idle");
-  const [hwStatus, setHwStatus] = useState<SaveStatus>("idle");
 
   const [paid, setPaid] = useState(session.paid);
   const [paidError, setPaidError] = useState<string | null>(null);
 
-  const [books, setBooks] = useState<BookOption[]>([]);
+  const [books] = useState<BookOption[]>(initialBooks);
   const [bookId, setBookId] = useState(session.book?.id ?? "");
   const [bookError, setBookError] = useState<string | null>(null);
 
@@ -108,19 +96,6 @@ export default function SessionDetail({
 
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
-  useEffect(() => {
-    let active = true;
-    fetch("/api/books")
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((data: BookOption[]) => active && setBooks(data))
-      .catch(() => {
-        /* books optional */
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
   async function patch(body: Record<string, unknown>) {
     const res = await fetch(`/api/sessions/${id}`, {
       method: "PATCH",
@@ -135,7 +110,7 @@ export default function SessionDetail({
   }
 
   function scheduleSave(
-    field: "topic" | "homework",
+    field: "topic",
     value: string,
     setStatus: (s: SaveStatus) => void
   ) {
@@ -255,11 +230,7 @@ export default function SessionDetail({
   }
 
   const d = new Date(startIso);
-  const datePart = d.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
+  const datePart = formatSessionDate(d);
   const timePart = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
   return (
@@ -377,6 +348,30 @@ export default function SessionDetail({
         )}
       </div>
 
+      {/* Meet link — read-only; source of truth is the student profile */}
+      <section>
+        <h2 className="text-sm font-semibold text-gray-500">Meet link</h2>
+        <div className="mt-1 space-y-1">
+          {meetLink ? (
+            <a
+              href={meetLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-blue-600 hover:underline break-all"
+            >
+              {meetLink}
+            </a>
+          ) : (
+            <p className="text-xs text-gray-400">No Meet link yet.</p>
+          )}
+          <p className="text-xs text-gray-400">
+            <Link href={`/students/${session.student.id}`} className="text-blue-600 hover:underline">
+              Generate, edit, or remove this link on the student&apos;s profile.
+            </Link>
+          </p>
+        </div>
+      </section>
+
       {/* Book */}
       <section>
         <h2 className="text-sm font-semibold text-gray-500">Book</h2>
@@ -409,7 +404,7 @@ export default function SessionDetail({
       <section>
         <h2 className="text-sm font-semibold text-gray-500">
           What we&apos;re covering
-          <SaveIndicator status={topicStatus} onRetry={() => scheduleSave("topic", topic, setTopicStatus)} />
+          <SaveIndicator status={topicStatus} onRetry={() => scheduleSave("topic", topic, setTopicStatus)} className="ml-2 text-xs" />
         </h2>
         <textarea
           value={topic}
@@ -419,24 +414,6 @@ export default function SessionDetail({
           }}
           rows={2}
           placeholder="What this session covers"
-          className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-        />
-      </section>
-
-      {/* Homework */}
-      <section>
-        <h2 className="text-sm font-semibold text-gray-500">
-          Homework
-          <SaveIndicator status={hwStatus} onRetry={() => scheduleSave("homework", homework, setHwStatus)} />
-        </h2>
-        <textarea
-          value={homework}
-          onChange={(e) => {
-            setHomework(e.target.value);
-            scheduleSave("homework", e.target.value, setHwStatus);
-          }}
-          rows={2}
-          placeholder="Assigned homework"
           className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
         />
       </section>

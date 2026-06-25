@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { requireUserId } from "@/lib/session";
 import { toDisplayChapters } from "@/lib/book-chapters";
 import AddBookForm from "@/components/AddBookForm";
 
@@ -10,7 +11,9 @@ export const dynamic = "force-dynamic";
 // generator when a session is linked to it. Cards preview chapter titles only —
 // section detail stays in the DB but isn't displayed.
 export default async function BooksPage() {
+  const userId = await requireUserId();
   const rows = await prisma.book.findMany({
+    where: { userId },
     orderBy: { title: "asc" },
     select: { id: true, title: true, author: true, chapters: true, contents: true },
   });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { SaveIndicator, type SaveStatus } from "./SaveIndicator";
 
 export type StudentDetailData = {
   id: string;
@@ -8,12 +9,18 @@ export type StudentDetailData = {
   level: string;
   rate: number;
   notes: string;
+  meetLink: string | null;
 };
 
-type Status = "idle" | "saving" | "saved" | "error";
 type Field = "level" | "rate" | "notes";
 
-export default function StudentDetail({ student }: { student: StudentDetailData }) {
+export default function StudentDetail({
+  student,
+  gcalConfigured,
+}: {
+  student: StudentDetailData;
+  gcalConfigured: boolean;
+}) {
   const [level, setLevel] = useState(student.level);
   const [rate, setRate] = useState(String(student.rate));
   const [notes, setNotes] = useState(student.notes);
@@ -22,7 +29,15 @@ export default function StudentDetail({ student }: { student: StudentDetailData 
     rate: String(student.rate),
     notes: student.notes,
   });
-  const [status, setStatus] = useState<Status>("idle");
+  const [status, setStatus] = useState<SaveStatus>("idle");
+
+  // Meet link state — separate from the shared status so the indicator doesn't
+  // flicker when other fields save.
+  const [meetLink, setMeetLink] = useState<string | null>(student.meetLink);
+  const [meetDraft, setMeetDraft] = useState(student.meetLink ?? "");
+  const [meetSaving, setMeetSaving] = useState(false);
+  const [meetGenerating, setMeetGenerating] = useState(false);
+  const [meetError, setMeetError] = useState<string | null>(null);
 
   async function saveField(field: Field, value: string) {
     if (value === saved[field]) return;
@@ -49,14 +64,83 @@ export default function StudentDetail({ student }: { student: StudentDetailData 
     }
   }
 
+  async function saveMeetLink() {
+    const trimmed = meetDraft.trim();
+    if (!trimmed) {
+      setMeetError("Enter a Meet link to save.");
+      return;
+    }
+    if (!trimmed.startsWith("http")) {
+      setMeetError("Meet link must start with http — check the URL.");
+      return;
+    }
+    setMeetError(null);
+    setMeetSaving(true);
+    try {
+      const res = await fetch(`/api/students/${student.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meetLink: trimmed }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error || "Save failed.");
+      }
+      setMeetLink(trimmed);
+    } catch (e) {
+      setMeetError(e instanceof Error ? e.message : "Save failed — try again.");
+    } finally {
+      setMeetSaving(false);
+    }
+  }
+
+  async function removeMeetLink() {
+    setMeetError(null);
+    setMeetSaving(true);
+    try {
+      const res = await fetch(`/api/students/${student.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meetLink: null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error || "Remove failed.");
+      }
+      setMeetLink(null);
+      setMeetDraft("");
+    } catch (e) {
+      setMeetError(e instanceof Error ? e.message : "Remove failed — try again.");
+    } finally {
+      setMeetSaving(false);
+    }
+  }
+
+  // Generate a fresh Meet link via Google Calendar — works whether or not a link
+  // already exists (replacing it). Requires the student to have a synced session.
+  async function generateMeet() {
+    setMeetError(null);
+    setMeetGenerating(true);
+    try {
+      const res = await fetch(`/api/students/${student.id}/meet`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error((data as { error?: string }).error || "Could not generate Meet link — try again.");
+      }
+      const link = (data as { meetLink?: unknown }).meetLink;
+      setMeetLink(typeof link === "string" ? link : null);
+      setMeetDraft("");
+    } catch (e) {
+      setMeetError(e instanceof Error ? e.message : "Could not generate Meet link — try again.");
+    } finally {
+      setMeetGenerating(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-xs">
-        {status === "saving" && <span className="text-gray-400">Saving…</span>}
-        {status === "saved" && <span className="text-gray-400">Saved</span>}
-        {status === "error" && (
-          <span className="text-red-600">Save failed — edit and blur again to retry</span>
-        )}
+        <SaveIndicator status={status} />
       </div>
 
       <div>
@@ -99,6 +183,69 @@ export default function StudentDetail({ student }: { student: StudentDetailData 
           placeholder="Anything not captured per-session"
           className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
         />
+      </div>
+
+      <div>
+        <label className="block text-sm font-semibold text-gray-500">Meet link</label>
+        <p className="text-xs text-gray-400">Used for every session with this student.</p>
+        {meetLink ? (
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <a
+              href={meetLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-blue-600 hover:underline break-all"
+            >
+              {meetLink}
+            </a>
+            {gcalConfigured && (
+              <button
+                onClick={generateMeet}
+                disabled={meetGenerating}
+                className="rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+              >
+                {meetGenerating ? "Generating…" : "Generate new"}
+              </button>
+            )}
+            <button
+              onClick={removeMeetLink}
+              disabled={meetSaving}
+              className="text-xs text-red-600 hover:underline disabled:opacity-60"
+            >
+              {meetSaving ? "Removing…" : "Remove"}
+            </button>
+          </div>
+        ) : (
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <input
+              type="url"
+              value={meetDraft}
+              onChange={(e) => {
+                setMeetDraft(e.target.value);
+                setMeetError(null);
+              }}
+              placeholder="https://meet.google.com/…"
+              className="rounded border border-gray-300 px-2 py-1.5 text-sm w-64"
+            />
+            <button
+              onClick={saveMeetLink}
+              disabled={meetSaving}
+              className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
+            >
+              {meetSaving ? "Saving…" : "Save"}
+            </button>
+            {gcalConfigured && (
+              <button
+                onClick={generateMeet}
+                disabled={meetGenerating}
+                className="rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+              >
+                {meetGenerating ? "Generating…" : "Generate"}
+              </button>
+            )}
+          </div>
+        )}
+        {meetError && <p className="mt-1 text-xs text-red-600">{meetError}</p>}
       </div>
     </div>
   );

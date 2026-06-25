@@ -1,7 +1,13 @@
 import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
 import { students } from "./seed.roster";
 
 const prisma = new PrismaClient();
+
+// The seeded roster is owned by a single bootstrap user. Override the login with
+// SEED_EMAIL / SEED_PASSWORD; defaults let `npm run seed` produce a usable login.
+const SEED_EMAIL = process.env.SEED_EMAIL || "bootstrap@sessiondesk.local";
+const SEED_PASSWORD = process.env.SEED_PASSWORD || "changeme123";
 
 // Real student data lives in prisma/seed.roster.ts, which is gitignored so the
 // roster never enters version control. Copy prisma/seed.roster.example.ts to
@@ -37,14 +43,24 @@ function ymd(d: Date): string {
 }
 
 async function main() {
+  // Bootstrap owner for the seeded roster. Reuses the fixed id the migration
+  // assigned to pre-existing rows so re-seeding doesn't orphan them.
+  const passwordHash = await bcrypt.hash(SEED_PASSWORD, 10);
+  const user = await prisma.user.upsert({
+    where: { email: SEED_EMAIL },
+    update: { passwordHash },
+    create: { id: "usr_bootstrap", email: SEED_EMAIL, passwordHash },
+  });
+  const userId = user.id;
+
   for (const s of students) {
     const { weekday, hour, ...studentData } = s;
     const id = s.name.toLowerCase(); // stable seed IDs
 
     await prisma.student.upsert({
       where: { id },
-      update: studentData,
-      create: { id, ...studentData },
+      update: { ...studentData, userId },
+      create: { id, ...studentData, userId },
     });
 
     // Recurring sessions for the current month (deterministic IDs → idempotent).
@@ -56,6 +72,7 @@ async function main() {
         create: {
           id: sessionId,
           studentId: id,
+          userId,
           start,
           amount: s.rate,
         },
@@ -64,6 +81,7 @@ async function main() {
   }
 
   console.log("Seeded students:", students.map((s) => s.name).join(", "));
+  console.log("Login:", SEED_EMAIL);
 }
 
 main()

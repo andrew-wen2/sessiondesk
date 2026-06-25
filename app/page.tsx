@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
+import { requireUserId } from "@/lib/session";
 import Calendar from "@/components/Calendar";
 import GcalBanner from "@/components/GcalBanner";
-import { isGcalConfigured } from "@/lib/gcal-token";
+import { isGcalConnected } from "@/lib/gcal-account";
 import type { CalendarSession } from "@/lib/types";
 
 // Calendar (default view). Server component: loads the visible month from the
@@ -11,6 +12,7 @@ export default async function CalendarPage({
 }: {
   searchParams: Promise<{ month?: string; student?: string }>;
 }) {
+  const userId = await requireUserId();
   const { month: monthParam, student: studentId } = await searchParams;
   const month = monthParam ?? new Date().toISOString().slice(0, 7);
   const [year, mon] = month.split("-").map(Number);
@@ -21,6 +23,7 @@ export default async function CalendarPage({
   // problems (heavy Json), homework, and other unused fields.
   const rows = await prisma.session.findMany({
     where: {
+      userId,
       start: { gte: start, lt: end },
       ...(studentId ? { studentId } : {}),
     },
@@ -47,14 +50,16 @@ export default async function CalendarPage({
     ? { id: studentId, name: rows[0]?.student.name ?? "student" }
     : null;
 
+  const gcalConnected = await isGcalConnected(userId);
+
   return (
     <div className="space-y-6">
-      <GcalBanner configured={isGcalConfigured()} />
+      <GcalBanner />
       <Calendar
         month={month}
         sessions={sessions}
         studentFilter={studentFilter}
-        gcalConfigured={isGcalConfigured()}
+        gcalConfigured={gcalConnected}
       />
     </div>
   );

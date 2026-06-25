@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { requireUserId } from "@/lib/session";
 import SessionDetail, { type SessionDetailData } from "@/components/SessionDetail";
 import type { Problem } from "@/components/ProblemSet";
-import { isGcalConfigured } from "@/lib/gcal-token";
+import { isGcalConnected } from "@/lib/gcal-account";
 
 // Session detail. Server shell: loads the session + student and hands a
 // serializable object to the interactive client component.
@@ -12,13 +13,23 @@ export default async function SessionPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const userId = await requireUserId();
 
-  const row = await prisma.session
-    .findUniqueOrThrow({
-      where: { id },
-      include: { student: true, book: { select: { id: true, title: true } } },
-    })
-    .catch(() => null);
+  // Fetch the session and the book-selector options in parallel — the books list
+  // was previously fetched client-side after mount, an avoidable round-trip.
+  const [row, books] = await Promise.all([
+    prisma.session
+      .findFirstOrThrow({
+        where: { id, userId },
+        include: { student: true, book: { select: { id: true, title: true } } },
+      })
+      .catch(() => null),
+    prisma.book.findMany({
+      where: { userId },
+      orderBy: { title: "asc" },
+      select: { id: true, title: true },
+    }),
+  ]);
 
   if (!row) notFound();
 
@@ -27,11 +38,12 @@ export default async function SessionPage({
     start: row.start.toISOString(),
     durationMin: row.durationMin,
     topic: row.topic,
-    homework: row.homework,
     paid: row.paid,
     amount: row.amount,
     problems: (row.problems as unknown as Problem[] | null) ?? null,
     googleEventId: row.googleEventId,
+    // meetLink is now on the student — source it from there.
+    meetLink: row.student.meetLink ?? null,
     book: row.book,
     student: {
       id: row.student.id,
@@ -40,5 +52,7 @@ export default async function SessionPage({
     },
   };
 
-  return <SessionDetail session={session} gcalConfigured={isGcalConfigured()} />;
+  return (
+    <SessionDetail session={session} books={books} gcalConfigured={await isGcalConnected(userId)} />
+  );
 }
