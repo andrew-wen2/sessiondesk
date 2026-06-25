@@ -1,17 +1,23 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { exchangeCode } from "@/lib/gcal";
+import { exchangeCode, verifyGoogleLogin } from "@/lib/gcal";
 import { getCurrentUserId } from "@/lib/session";
+import { SESSION_COOKIE, SESSION_MAX_AGE, signSession } from "@/lib/auth";
 
-// GET /api/auth/google — OAuth callback. Exchanges the code for tokens and stores
-// the refresh token on the signed-in user's row (per-user Calendar link). The
-// callback runs in the user's browser, so the session cookie identifies who to
-// attach it to.
+// GET /api/auth/google — shared OAuth callback for both Google flows, told apart
+// by the `state` param:
+//   - state=signin  → "Sign in with Google": find-or-create the user by verified
+//                     email, link googleId, set the session cookie. No prior session.
+//   - state=connect → link the signed-in user's Calendar (store the refresh token).
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
   const error = searchParams.get("error");
+  const state = searchParams.get("state");
 
+  if (state === "signin") return handleSignin(request, code, error);
+
+  // --- Calendar-connect flow (requires an existing session) ---
   const userId = await getCurrentUserId();
   if (!userId) return NextResponse.redirect(new URL("/login", request.url));
 
@@ -38,5 +44,39 @@ export async function GET(request: Request) {
   } catch (e) {
     console.error("[/api/auth/google] token exchange failed:", e);
     return NextResponse.redirect(new URL("/?gcal=error", request.url));
+  }
+}
+
+// Sign-in-with-Google: verify the identity, find-or-create the user by email
+// (linking to an existing email/password account when the email matches), and
+// issue the session cookie on the redirect to the app.
+async function handleSignin(request: Request, code: string | null, error: string | null) {
+  if (error || !code) {
+    return NextResponse.redirect(new URL("/login?error=google", request.url));
+  }
+  try {
+    const identity = await verifyGoogleLogin(code);
+    if (!identity) {
+      return NextResponse.redirect(new URL("/login?error=google", request.url));
+    }
+    // Same email = same person → log into the existing account and stamp googleId;
+    // otherwise create a Google-only account (empty passwordHash until they set one).
+    const user = await prisma.user.upsert({
+      where: { email: identity.email },
+      update: { googleId: identity.googleId },
+      create: { email: identity.email, passwordHash: "", googleId: identity.googleId },
+    });
+    const res = NextResponse.redirect(new URL("/", request.url));
+    res.cookies.set(SESSION_COOKIE, await signSession(user.id), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: SESSION_MAX_AGE,
+    });
+    return res;
+  } catch (e) {
+    console.error("[/api/auth/google] sign-in failed:", e);
+    return NextResponse.redirect(new URL("/login?error=google", request.url));
   }
 }

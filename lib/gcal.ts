@@ -75,6 +75,11 @@ const COLOR_UNPAID = "6";
 
 const SCOPES = ["https://www.googleapis.com/auth/calendar.events"];
 
+// Identity scopes for "Sign in with Google" — just enough to read the verified
+// email + stable account id from the id_token. No calendar access, no refresh
+// token needed (we only consume the identity once, at sign-in).
+const LOGIN_SCOPES = ["openid", "email", "profile"];
+
 // App-level OAuth client (no user credentials) — used only for the OAuth flow
 // (auth URL + code exchange). Client id/secret/redirect are app-wide env.
 function getAppOAuthClient() {
@@ -126,12 +131,43 @@ export function getAuthUrl(): string {
     access_type: "offline",
     prompt: "consent", // forces refresh_token even on repeat authorization
     scope: SCOPES,
+    state: "connect", // the shared callback branches on this (vs "signin")
   });
 }
 
 export async function exchangeCode(code: string) {
   const { tokens } = await getAppOAuthClient().getToken(code);
   return tokens;
+}
+
+// --- Sign-in-with-Google flow (identity only; shares the app OAuth client and
+// the single registered redirect URI with the Calendar flow, distinguished by
+// the `state` param the callback reads). ---
+
+export function getLoginAuthUrl(): string {
+  return getAppOAuthClient().generateAuthUrl({
+    scope: LOGIN_SCOPES,
+    state: "signin",
+    prompt: "select_account", // let the user pick which Google account to use
+  });
+}
+
+// Exchanges the sign-in code for an id_token and returns the verified identity,
+// or null if the token is missing / the email isn't verified. We verify the
+// id_token's signature + audience rather than trusting the email blindly.
+export async function verifyGoogleLogin(
+  code: string
+): Promise<{ email: string; googleId: string } | null> {
+  const client = getAppOAuthClient();
+  const { tokens } = await client.getToken(code);
+  if (!tokens.id_token) return null;
+  const ticket = await client.verifyIdToken({
+    idToken: tokens.id_token,
+    audience: process.env.GOOGLE_CLIENT_ID,
+  });
+  const payload = ticket.getPayload();
+  if (!payload?.email || !payload.email_verified || !payload.sub) return null;
+  return { email: payload.email.toLowerCase(), googleId: payload.sub };
 }
 
 // --- Event CRUD --- (each takes the acting user's GCalAccount)

@@ -14,7 +14,12 @@ datasource db {
 model User {
   id           String    @id @default(cuid())
   email        String    @unique
-  passwordHash String // bcrypt; never returned to the client
+  passwordHash String // bcrypt; never returned to the client. Empty for accounts
+  // created via Google sign-in until the user sets a password (verifyPassword
+  // rejects an empty hash, so a Google-only account can't be password-logged-in).
+  // Google identity (OAuth "sub"), set when the user signs in with Google. Linked
+  // to the account whose email matches; null for password-only accounts.
+  googleId     String?   @unique
   // Per-user Google Calendar link. Refresh token is the user's own OAuth grant
   // (server-side only, never sent to the client); calendarId is the calendar to
   // mirror into (null → "primary"). App client id/secret stay in env.
