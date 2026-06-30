@@ -6,7 +6,6 @@ import { getCurrentUserId } from "@/lib/session";
 import { buildPrompt, buildAuditPrompt, buildExpandPrompt, buildSeedSketchPrompt } from "@/lib/generation-prompt";
 import { calibrationFor, categoryFor, countForTier, tierFor } from "@/lib/calibration";
 import { getAnchors } from "@/lib/corpus-retrieval";
-import { selectBookContents } from "@/lib/book-chapters";
 import { answerOk, problemOk, solutionOk, solutionSketchOk, tooSimilarToSeed } from "@/lib/generation/verifier";
 import { expandSolutions } from "@/lib/generation/expand";
 import { sketchSeeds } from "@/lib/generation/seed-sketch";
@@ -219,8 +218,8 @@ async function callTool(
     // of mathematically wrong answers. Adaptive is the only on-mode for Sonnet 4.6;
     // easy tier sets thinking disabled (Haiku 4.5, generate-from-scratch).
     thinking: config.thinking,
-    // The stable instructions + rubric + (trimmed) book live in the system block
-    // and are cached; the deficit-retry and same-student repeat generations read
+    // The stable instructions + rubric live in the system block and are cached;
+    // the deficit-retry and same-student repeat generations read
     // them back at ~0.1× instead of full input price.
     system: [{ type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } }],
     tools: [config.tool],
@@ -316,19 +315,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing student or session." }, { status: 400 });
     }
 
-    // Batch all DB reads into parallel queries — student + session-with-book and
-    // recent topics. All scoped to the current user so generation can't be driven
-    // off another user's student/session.
+    // Batch all DB reads into parallel queries — student, session, and recent
+    // topics. All scoped to the current user so generation can't be driven off
+    // another user's student/session.
     const [student, sessionRow, recent] = await Promise.all([
       prisma.student.findFirst({
         where: { id: studentId, userId },
         select: { level: true },
       }),
-      // The book assigned to this session (if any) — its chapter contents tell the
-      // model what the chapters named in `topic` actually cover.
       prisma.session.findFirst({
         where: { id: sessionId, userId },
-        select: { id: true, book: { select: { title: true, contents: true, chapters: true } } },
+        select: { id: true },
       }),
       // Last 5 non-empty topics for this student, most recent first.
       prisma.session.findMany({
@@ -345,16 +342,6 @@ export async function POST(request: Request) {
     // the nested generation closures below.
     const studentLevel = student.level;
     const recentTopics = recent.map((s) => s.topic);
-
-    // Trim the book outline to the chapters/sections the topic names — the book
-    // is the dominant input cost. Falls back to the full outline when it can't
-    // safely narrow (empty topic, legacy book, or no match).
-    const book = sessionRow?.book
-      ? {
-          title: sessionRow.book.title,
-          contents: selectBookContents(sessionRow.book.chapters, sessionRow.book.contents, topic),
-        }
-      : undefined;
 
     // Difficulty calibration: derive the competition + problem-number band, then
     // retrieve real same-difficulty anchor problems from the corpus.
@@ -422,7 +409,6 @@ export async function POST(request: Request) {
       topic,
       count,
       recentTopics,
-      book,
       competition: cal.competition ?? undefined,
       bandLow: cal.bandLow,
       bandHigh: cal.bandHigh,
@@ -568,7 +554,6 @@ export async function POST(request: Request) {
             topic,
             count: chunkSize,
             recentTopics,
-            book,
             competition: cal.competition ?? undefined,
             bandLow: cal.bandLow,
             bandHigh: cal.bandHigh,
@@ -633,7 +618,6 @@ export async function POST(request: Request) {
               topic,
               count: ask, // only this differs from the first call
               recentTopics,
-              book,
               competition: cal.competition ?? undefined,
               bandLow: cal.bandLow,
               bandHigh: cal.bandHigh,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { StudentOption, BookOption } from "@/lib/types";
+import type { StudentOption } from "@/lib/types";
 
 const DURATIONS = [30, 45, 60, 90, 120];
 
@@ -18,9 +18,6 @@ export default function AddSessionModal({
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<StudentOption | null>(null);
   const [showList, setShowList] = useState(false);
-
-  const [books, setBooks] = useState<BookOption[]>([]);
-  const [bookId, setBookId] = useState("");
 
   const [rate, setRate] = useState<string>("");
   const [date, setDate] = useState(dateISO);
@@ -39,12 +36,6 @@ export default function AddSessionModal({
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((data: StudentOption[]) => active && setStudents(data))
       .catch(() => active && setError("Could not load students — close and reopen."));
-    fetch("/api/books")
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((data: BookOption[]) => active && setBooks(data))
-      .catch(() => {
-        /* books are optional; ignore load failure */
-      });
     nameRef.current?.focus();
     return () => {
       active = false;
@@ -115,7 +106,6 @@ export default function AddSessionModal({
           durationMin: duration,
           topic: topic.trim(),
           amount: rateNum,
-          bookId: bookId || null,
         }),
       });
       if (!res.ok) {
@@ -234,25 +224,6 @@ export default function AddSessionModal({
               </select>
             </div>
           </div>
-
-          {/* Book */}
-          {books.length > 0 && (
-            <div>
-              <label className="block text-sm text-gray-600">Book (optional)</label>
-              <select
-                value={bookId}
-                onChange={(e) => setBookId(e.target.value)}
-                className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-              >
-                <option value="">No book</option>
-                {books.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.title}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
 
           {/* Topic */}
           <div>

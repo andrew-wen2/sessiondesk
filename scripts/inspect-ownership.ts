@@ -9,7 +9,7 @@ async function main() {
       email: true,
       googleId: true,
       passwordHash: true,
-      _count: { select: { students: true, sessions: true, books: true } },
+      _count: { select: { students: true, sessions: true } },
     },
     orderBy: { createdAt: "asc" },
   });
@@ -17,7 +17,7 @@ async function main() {
   console.log("USERS:");
   for (const u of users) {
     console.log(
-      `  ${u.email}  id=${u.id}  google=${u.googleId ? "yes" : "no"}  pw=${u.passwordHash ? "set" : "empty"}  students=${u._count.students} sessions=${u._count.sessions} books=${u._count.books}`
+      `  ${u.email}  id=${u.id}  google=${u.googleId ? "yes" : "no"}  pw=${u.passwordHash ? "set" : "empty"}  students=${u._count.students} sessions=${u._count.sessions}`
     );
   }
 
@@ -25,7 +25,6 @@ async function main() {
   const totals = {
     students: await prisma.student.count(),
     sessions: await prisma.session.count(),
-    books: await prisma.book.count(),
   };
   console.log("\nTOTAL ROWS:", totals);
 }

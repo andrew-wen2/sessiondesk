@@ -71,22 +71,6 @@ export async function PATCH(
       }
       data.amount = a.value;
     }
-    if ("bookId" in body) {
-      if (body.bookId === null || body.bookId === "") {
-        data.book = { disconnect: true };
-      } else if (typeof body.bookId === "string") {
-        // The book must belong to this user before we link it.
-        const book = await prisma.book.findFirst({
-          where: { id: body.bookId, userId },
-          select: { id: true },
-        });
-        if (!book) return NextResponse.json({ error: "That book was not found." }, { status: 400 });
-        data.book = { connect: { id: body.bookId } };
-      } else {
-        return NextResponse.json({ error: "Invalid book." }, { status: 400 });
-      }
-    }
-
     if ("problems" in body) {
       if (body.problems === null) {
         data.problems = Prisma.JsonNull;

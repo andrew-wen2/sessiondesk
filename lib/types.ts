@@ -48,8 +48,3 @@ export type Anchor = {
   // after retrieval; absent on the scratch path or if Stage A fails.
   sketch?: string;
 };
-
-export type BookOption = {
-  id: string;
-  title: string;
-};

@@ -35,7 +35,6 @@ export async function GET(request: Request) {
         amount: true,
         paid: true,
         googleEventId: true,
-        bookId: true,
         createdAt: true,
         student: { select: { name: true } },
       },
@@ -61,7 +60,6 @@ export async function POST(request: Request) {
     const studentId = typeof body.studentId === "string" ? body.studentId : "";
     const durationMin = body.durationMin != null ? Number(body.durationMin) : 60;
     const topic = typeof body.topic === "string" ? body.topic : "";
-    const bookId = typeof body.bookId === "string" && body.bookId ? body.bookId : null;
 
     if (!studentId) {
       return NextResponse.json({ error: "Pick a student first." }, { status: 400 });
@@ -75,8 +73,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Rate must be a non-negative number." }, { status: 400 });
     }
 
-    // The student (and book, if any) must belong to this user — block linking a
-    // session to another user's records.
+    // The student must belong to this user — block linking a session to another
+    // user's records.
     const student = await prisma.student.findFirst({
       where: { id: studentId, userId },
       select: { id: true },
@@ -84,19 +82,12 @@ export async function POST(request: Request) {
     if (!student) {
       return NextResponse.json({ error: "Pick a student first." }, { status: 400 });
     }
-    if (bookId) {
-      const book = await prisma.book.findFirst({ where: { id: bookId, userId }, select: { id: true } });
-      if (!book) {
-        return NextResponse.json({ error: "That book was not found." }, { status: 400 });
-      }
-    }
 
     // Include student name + meetLink for the GCal event; the client reads only res.ok.
     const session = await prisma.session.create({
       data: {
         userId,
         studentId,
-        bookId,
         start: start.value,
         durationMin: Number.isFinite(durationMin) ? durationMin : 60,
         topic,

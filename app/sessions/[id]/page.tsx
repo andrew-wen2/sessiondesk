@@ -15,21 +15,12 @@ export default async function SessionPage({
   const { id } = await params;
   const userId = await requireUserId();
 
-  // Fetch the session and the book-selector options in parallel — the books list
-  // was previously fetched client-side after mount, an avoidable round-trip.
-  const [row, books] = await Promise.all([
-    prisma.session
-      .findFirstOrThrow({
-        where: { id, userId },
-        include: { student: true, book: { select: { id: true, title: true } } },
-      })
-      .catch(() => null),
-    prisma.book.findMany({
-      where: { userId },
-      orderBy: { title: "asc" },
-      select: { id: true, title: true },
-    }),
-  ]);
+  const row = await prisma.session
+    .findFirstOrThrow({
+      where: { id, userId },
+      include: { student: true },
+    })
+    .catch(() => null);
 
   if (!row) notFound();
 
@@ -44,7 +35,6 @@ export default async function SessionPage({
     googleEventId: row.googleEventId,
     // meetLink is now on the student — source it from there.
     meetLink: row.student.meetLink ?? null,
-    book: row.book,
     student: {
       id: row.student.id,
       name: row.student.name,
@@ -53,6 +43,6 @@ export default async function SessionPage({
   };
 
   return (
-    <SessionDetail session={session} books={books} gcalConfigured={await isGcalConnected(userId)} />
+    <SessionDetail session={session} gcalConfigured={await isGcalConnected(userId)} />
   );
 }

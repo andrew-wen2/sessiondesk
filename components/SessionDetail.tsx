@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { BookOption } from "@/lib/types";
 import { pad, formatSessionDate } from "@/lib/format";
 import { SaveIndicator, type SaveStatus } from "./SaveIndicator";
 import ProblemSet, { type Problem } from "./ProblemSet";
@@ -22,7 +21,6 @@ export type SessionDetailData = {
   problems: Problem[] | null;
   googleEventId: string | null;
   meetLink: string | null;
-  book: { id: string; title: string } | null;
   student: {
     id: string;
     name: string;
@@ -32,11 +30,9 @@ export type SessionDetailData = {
 
 export default function SessionDetail({
   session,
-  books: initialBooks,
   gcalConfigured = false,
 }: {
   session: SessionDetailData;
-  books: BookOption[];
   gcalConfigured?: boolean;
 }) {
   const { id } = session;
@@ -74,10 +70,6 @@ export default function SessionDetail({
 
   const [paid, setPaid] = useState(session.paid);
   const [paidError, setPaidError] = useState<string | null>(null);
-
-  const [books] = useState<BookOption[]>(initialBooks);
-  const [bookId, setBookId] = useState(session.book?.id ?? "");
-  const [bookError, setBookError] = useState<string | null>(null);
 
   const [problems, setProblems] = useState<Problem[]>(session.problems ?? []);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -136,18 +128,6 @@ export default function SessionDetail({
     } catch {
       setPaid(!nextPaid); // revert
       setPaidError("Could not update payment — try again.");
-    }
-  }
-
-  async function changeBook(nextId: string) {
-    const prev = bookId;
-    setBookId(nextId); // optimistic
-    setBookError(null);
-    try {
-      await patch({ bookId: nextId || null });
-    } catch {
-      setBookId(prev); // revert
-      setBookError("Could not update book — try again.");
     }
   }
 
@@ -369,34 +349,6 @@ export default function SessionDetail({
               Generate, edit, or remove this link on the student&apos;s profile.
             </Link>
           </p>
-        </div>
-      </section>
-
-      {/* Book */}
-      <section>
-        <h2 className="text-sm font-semibold text-gray-500">Book</h2>
-        <p className="text-xs text-gray-400">
-          Link a book so generated problems cover the chapters you note below.
-        </p>
-        <div className="mt-1 flex items-center gap-2">
-          <select
-            value={bookId}
-            onChange={(e) => changeBook(e.target.value)}
-            className="rounded border border-gray-300 px-2 py-1.5 text-sm"
-          >
-            <option value="">No book</option>
-            {books.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.title}
-              </option>
-            ))}
-          </select>
-          {bookId && (
-            <Link href={`/books/${bookId}`} className="text-xs text-blue-600 hover:underline">
-              Edit book
-            </Link>
-          )}
-          {bookError && <span className="text-xs text-red-600">{bookError}</span>}
         </div>
       </section>
 

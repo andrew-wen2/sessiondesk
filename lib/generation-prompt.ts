@@ -12,7 +12,6 @@ export type GenerationInput = {
   topic: string;
   count: number;
   recentTopics: string[]; // last N session topics, most recent first
-  book?: { title: string; contents: string }; // assigned book for this session, if any
   competition?: string; // "AMC10" | "AMC12" | "AIME" | "Fma" — selects the difficulty rubric
   bandLow?: number | null; // target problem-number band (difficulty floor/ceiling)
   bandHigh?: number | null;
@@ -66,7 +65,7 @@ function bandRegister(
 }
 
 export function buildPrompt(input: GenerationInput): { system: string; user: string } {
-  const { level, topic, count, recentTopics, book, competition, bandLow, bandHigh, anchors, mode = "scratch", avoidStatements } =
+  const { level, topic, count, recentTopics, competition, bandLow, bandHigh, anchors, mode = "scratch", avoidStatements } =
     input;
   // Adapt only applies on the variant path AND only when the seeds actually carry
   // solutions to transform (AIME/AMC do; F=ma seeds are null → statement-only re-solve).
@@ -87,13 +86,6 @@ export function buildPrompt(input: GenerationInput): { system: string; user: str
           .map((t, i) => `${i + 1}. ${t}`)
           .join("\n")}`
       : "No prior session history — this is the student's first session.";
-
-  const bookBlock =
-    book && book.contents.trim()
-      ? `\nAssigned book: ${book.title}. The session's topic (given below) names chapters from this book. Use the chapter contents here to determine exactly what those chapters cover, and generate problems on those topics.\n\nBook contents:\n${book.contents}\n`
-      : book
-        ? `\nAssigned book: ${book.title}. The session's topic (given below) may name chapters from it — generate problems matching those chapters.\n`
-        : "";
 
   const rubric = competition && RUBRICS[competition] ? `\n${RUBRICS[competition]}\n` : "";
 
@@ -145,12 +137,12 @@ export function buildPrompt(input: GenerationInput): { system: string; user: str
       : "";
 
   // The system block is intentionally count-free and depends only on
-  // per-student-stable inputs (rubric/band) plus the topic-trimmed book, so it
-  // stays byte-identical across the deficit-retry attempt and qualifies for
-  // prompt caching. All volatile, per-call content (student profile, history,
-  // randomized anchors, and the count) lives in the user block.
+  // per-student-stable inputs (rubric/band), so it stays byte-identical across
+  // the deficit-retry attempt and qualifies for prompt caching. All volatile,
+  // per-call content (student profile, history, randomized anchors, and the
+  // count) lives in the user block.
   const system = `You are generating competition math/physics practice problems for a one-on-one tutoring session.
-${bookBlock}${rubric}${bandBlock}
+${rubric}${bandBlock}
 Each problem must meet ALL of these requirements:
 - Difficulty must match the calibration and the reference problems provided EXACTLY — not easier, not harder. This is the most important requirement. ${routine ? "These are early, ROUTINE problems: keep them quick and single-idea. If you are uncertain whether a problem is at the right level, err SIMPLER, never harder — do NOT add artificial difficulty." : "Generators of these problems tend to come out TOO EASY, so deliberately push to the top of the band; when you are uncertain whether a problem is hard enough, err HARDER, never easier."}
 - Use ONLY terminology, notation, named results, and techniques that are standard at the stated competition level. Do NOT introduce any concept, vocabulary, theorem, or method above that level — for AMC/AIME this means no university-level machinery (calculus, linear algebra, complex analysis, or advanced/olympiad theorems a solver at this level would not know); for F=ma, no calculus beyond the basics and no upper-division physics. Every problem must be both STATED and SOLVABLE with the toolkit a student at this level already has. Make the hard problems difficult through deeper, multi-step reasoning and synthesis of in-level ideas — never by reaching for above-level terminology or tools.

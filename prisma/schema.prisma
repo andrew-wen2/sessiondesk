@@ -1,4 +1,4 @@
-// Session Desk data model. Per-user multi-tenant: User owns Student/Book/Session.
+// Session Desk data model. Per-user multi-tenant: User owns Student/Session.
 // Payment is a boolean on Session (YAGNI). "Learned so far" is derived from
 // session topics, never stored. ReferenceProblem is a global shared corpus.
 
@@ -27,7 +27,6 @@ model User {
   googleCalendarId   String?
   createdAt    DateTime  @default(now())
   students     Student[]
-  books        Book[]
   sessions     Session[]
 }
 
@@ -67,28 +66,12 @@ model ReferenceProblem {
   @@index([category])
 }
 
-model Book {
-  id        String    @id @default(cuid())
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId     String
-  title     String
-  author    String?
-  contents  String    @default("") // free-text TOC / chapter topics, fed to the generator
-  chapters  Json?     // structured outline [{number,title,sections:[{number,title,concepts}]}]; titles shown as a table, sections stored but not displayed
-  sessions  Session[]
-  createdAt DateTime  @default(now())
-
-  @@index([userId])
-}
-
 model Session {
   id            String   @id @default(cuid())
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId        String
   student       Student  @relation(fields: [studentId], references: [id])
   studentId     String
-  book          Book?    @relation(fields: [bookId], references: [id], onDelete: SetNull)
-  bookId        String?
   start         DateTime
   durationMin   Int      @default(60)
   topic         String   @default("")
@@ -102,5 +85,4 @@ model Session {
   @@index([userId])
   @@index([studentId])
   @@index([start])
-  @@index([bookId])
 }

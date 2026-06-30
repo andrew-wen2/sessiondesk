@@ -5,7 +5,7 @@ import { SESSION_COOKIE, SESSION_MAX_AGE, signSession } from "@/lib/auth";
 import { hashPassword } from "@/lib/password";
 
 // POST /api/auth/register — create a new user account and sign them in. Each user
-// gets their own isolated students/sessions/books.
+// gets their own isolated students/sessions.
 export async function POST(request: Request) {
   try {
     const body = await request.json();
