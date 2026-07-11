@@ -25,13 +25,14 @@ export default async function StudentsPage() {
   const students: StudentCardData[] = rows.map((s) => ({
     id: s.id,
     name: s.name,
+    subject: s.subject,
     level: s.level,
     rate: s.rate,
     recentTopics: s.sessions.map((x) => ({ start: x.start.toISOString(), topic: x.topic })),
   }));
 
   return (
-    <div className="space-y-4">
+    <div className="mx-auto max-w-4xl space-y-4">
       <h1 className="text-xl font-bold">Students</h1>
       {students.length === 0 ? (
         <p className="text-sm text-gray-500">No students yet — add one from the calendar.</p>

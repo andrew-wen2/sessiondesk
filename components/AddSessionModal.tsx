@@ -7,10 +7,14 @@ const DURATIONS = [30, 45, 60, 90, 120];
 
 export default function AddSessionModal({
   dateISO,
+  timeHHMM,
+  durationMin,
   onClose,
   onCreated,
 }: {
   dateISO: string; // YYYY-MM-DD of the clicked day
+  timeHHMM?: string; // HH:MM when opened from a week-view hour slot / drag
+  durationMin?: number; // swept length when opened via week-view drag-to-create
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -20,9 +24,16 @@ export default function AddSessionModal({
   const [showList, setShowList] = useState(false);
 
   const [rate, setRate] = useState<string>("");
+  // Captured only when creating a NEW student (existing students keep their own).
+  // New students are always created on the "general" engine (the API default); the
+  // competition-math corpus is an opt-in toggle in Student detail, not a decision
+  // forced at creation time.
+  const [subject, setSubject] = useState("");
   const [date, setDate] = useState(dateISO);
-  const [time, setTime] = useState("17:00");
-  const [duration, setDuration] = useState(60);
+  const [time, setTime] = useState(timeHHMM ?? "17:00");
+  const [duration, setDuration] = useState(durationMin ?? 60);
+  // A dragged length may not be one of the presets — offer it as an extra option.
+  const durationOptions = DURATIONS.includes(duration) ? DURATIONS : [...DURATIONS, duration].sort((a, b) => a - b);
   const [topic, setTopic] = useState("");
 
   const [saving, setSaving] = useState(false);
@@ -87,7 +98,7 @@ export default function AddSessionModal({
         const res = await fetch("/api/students", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: trimmedName, rate: rateNum }),
+          body: JSON.stringify({ name: trimmedName, rate: rateNum, subject: subject.trim() }),
         });
         if (!res.ok) {
           const { error } = await res.json().catch(() => ({ error: "" }));
@@ -169,10 +180,26 @@ export default function AddSessionModal({
                 New student — created on save. Set the level later in Students.
               </p>
             )}
-            {selected?.level && (
+            {!willCreate && selected?.subject && (
+              <p className="mt-1 text-xs text-gray-500">Subject: {selected.subject}</p>
+            )}
+            {!willCreate && selected?.level && (
               <p className="mt-1 text-xs text-gray-500">Level: {selected.level}</p>
             )}
           </div>
+
+          {/* New-student subject (only when creating one) */}
+          {willCreate && (
+            <div>
+              <label className="block text-sm text-gray-600">Subject</label>
+              <input
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                placeholder="e.g. Spanish, AP Physics, Competition Math"
+                className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+              />
+            </div>
+          )}
 
           {/* Rate */}
           <div>
@@ -216,7 +243,7 @@ export default function AddSessionModal({
                 onChange={(e) => setDuration(Number(e.target.value))}
                 className="mt-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
               >
-                {DURATIONS.map((d) => (
+                {durationOptions.map((d) => (
                   <option key={d} value={d}>
                     {d} min
                   </option>

@@ -91,7 +91,7 @@ export async function PATCH(
     const session = await prisma.session.update({
       where: { id },
       data,
-      include: { student: { select: { name: true, level: true, meetLink: true } } },
+      include: { student: { select: { name: true, subject: true, level: true, meetLink: true } } },
     });
 
     // Mirror topic/time/duration/paid changes to the GCal event after the

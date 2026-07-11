@@ -5,6 +5,7 @@ import { getCurrentUserId } from "@/lib/session";
 import { deleteEvent, propagateMeetLink, SESSION_FOR_GCAL_SELECT } from "@/lib/gcal";
 import { getGcalAccount } from "@/lib/gcal-account";
 import { parseNonNegInt, parseMeetLink } from "@/lib/validation";
+import { getProfile } from "@/lib/subjects";
 
 // GET /api/students/[id] — single student (must belong to the current user).
 export async function GET(
@@ -25,8 +26,8 @@ export async function GET(
   }
 }
 
-// PATCH /api/students/[id] — name, level, rate, notes are editable. id is not
-// patchable here.
+// PATCH /api/students/[id] — name, subject, generatorProfile, level, rate, notes,
+// meetLink are editable. id is not patchable here.
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -51,6 +52,9 @@ export async function PATCH(
       data.name = name;
     }
     if (typeof body.level === "string") data.level = body.level;
+    if (typeof body.subject === "string") data.subject = body.subject.trim();
+    // Normalize through getProfile so only a known key is ever stored.
+    if (typeof body.generatorProfile === "string") data.generatorProfile = getProfile(body.generatorProfile).key;
     if (typeof body.notes === "string") data.notes = body.notes;
     if (body.rate !== undefined) {
       const rate = parseNonNegInt(body.rate);

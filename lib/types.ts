@@ -4,16 +4,19 @@
 export type CalendarSession = {
   id: string;
   start: string; // ISO 8601
+  durationMin: number;
   paid: boolean;
   amount: number;
   studentName: string;
+  topic: string; // shown in the calendar preview popover; "" when unset
 };
 
-// Fields the Add-session combobox needs — name + the rate/level it autofills.
+// Fields the Add-session combobox needs — name + the rate/subject/level it autofills.
 export type StudentOption = {
   id: string;
   name: string;
   rate: number;
+  subject: string;
   level: string;
 };
 
@@ -27,6 +30,18 @@ export type Problem = {
   // existed — display/PDF read `solution`, which is always populated.
   solutionSketch?: string;
   difficulty?: string; // model's self-estimate, e.g. "AIME #12" (calibration aid)
+};
+
+// A generated lesson — structured teaching content for a session, stored on
+// Session.lesson. Parallel to Problem[]. `content`/`solution` may carry LaTeX
+// ($...$ / $$...$$) or fenced code, rendered by RichContent. Practice items reuse
+// the Problem-shaped answer/solution (answer may be empty for open-ended work).
+export type Lesson = {
+  title: string;
+  objectives: string[]; // what the student should be able to do after
+  sections: { heading: string; content: string }[]; // the explanation, in order
+  workedExamples: { problem: string; solution: string }[];
+  practice: { problem: string; answer: string; solution: string }[];
 };
 
 // A real reference problem retrieved from the corpus, used to calibrate (or, in

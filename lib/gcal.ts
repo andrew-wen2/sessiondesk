@@ -32,7 +32,7 @@ export type SessionForGCal = {
   topic: string;
   paid: boolean;
   meetLink: string | null;
-  student: { name: string; level: string };
+  student: { name: string; subject: string; level: string };
 };
 
 // The Prisma select every route uses to load a session for the GCal mirror, and
@@ -46,7 +46,7 @@ export const SESSION_FOR_GCAL_SELECT = {
   topic: true,
   paid: true,
   googleEventId: true,
-  student: { select: { name: true, level: true, meetLink: true } },
+  student: { select: { name: true, subject: true, level: true, meetLink: true } },
 } satisfies Prisma.SessionSelect;
 
 export function toSessionForGCal(row: {
@@ -55,7 +55,7 @@ export function toSessionForGCal(row: {
   durationMin: number;
   topic: string;
   paid: boolean;
-  student: { name: string; level: string; meetLink: string | null };
+  student: { name: string; subject: string; level: string; meetLink: string | null };
 }): SessionForGCal {
   return {
     id: row.id,
@@ -64,7 +64,7 @@ export function toSessionForGCal(row: {
     topic: row.topic,
     paid: row.paid,
     meetLink: row.student.meetLink,
-    student: { name: row.student.name, level: row.student.level },
+    student: { name: row.student.name, subject: row.student.subject, level: row.student.level },
   };
 }
 
@@ -111,6 +111,7 @@ function eventBody(session: SessionForGCal) {
   // always visible on the event even if the conferenceData approach is rejected.
   const descParts = [
     session.topic ? `Topic: ${session.topic}` : null,
+    session.student.subject ? `Subject: ${session.student.subject}` : null,
     session.student.level ? `Level: ${session.student.level}` : null,
     session.meetLink ? `Meet: ${session.meetLink}` : null,
   ].filter(Boolean);

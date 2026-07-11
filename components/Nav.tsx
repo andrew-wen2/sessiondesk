@@ -35,7 +35,7 @@ export default function Nav({
 
   return (
     <nav className="border-b border-gray-200 bg-white">
-      <div className="mx-auto flex max-w-4xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-sm">
+      <div className="flex w-full flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-sm sm:px-6 lg:px-8">
         <span className="font-semibold">Session Desk</span>
         <div className="flex gap-3">
           {LINKS.map((l) => {

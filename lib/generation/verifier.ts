@@ -34,6 +34,22 @@ export function answerOk(p: Problem, competition?: string): boolean {
   return true;
 }
 
+// Answer guard for the general (non-competition) profile: subjects span math,
+// languages, coding, essays, so there is no single answer FORMAT to enforce, and
+// some content is open-ended (a writing prompt has no short answer). An empty
+// answer is therefore allowed; a non-empty answer is only rejected when it is a
+// placeholder / an MC option letter — never on format. `PLACEHOLDER_RE` and the
+// MC checks are shared with answerOk so the two guards can't drift.
+export function answerOkLenient(p: Problem): boolean {
+  const a = (p.answer || "").trim();
+  if (!a) return true; // open-ended content is fine
+  if (/\b(tbd|tba|todo|n\/?a|hint|see solution|to be determined|placeholder|unknown)\b/i.test(`${p.answer} ${p.solution}`))
+    return false;
+  if (/^\?+$/.test(a)) return false;
+  if (/^\(\s*[A-E]\s*\)$/.test(a)) return false; // we generate free-response
+  return true;
+}
+
 // --- Statement guard --------------------------------------------------------
 
 // Self-correction / thinking-out-loud inside the problem field (the "Actually

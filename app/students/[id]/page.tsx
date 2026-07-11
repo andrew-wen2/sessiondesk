@@ -36,6 +36,8 @@ export default async function StudentPage({
   const student: StudentDetailData = {
     id: row.id,
     name: row.name,
+    subject: row.subject,
+    generatorProfile: row.generatorProfile,
     level: row.level,
     rate: row.rate,
     notes: row.notes ?? "",
@@ -48,7 +50,7 @@ export default async function StudentPage({
   }));
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-4xl space-y-6">
       <Link href="/students" className="text-sm text-blue-600 hover:underline">
         ← All students
       </Link>

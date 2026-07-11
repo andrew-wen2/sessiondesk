@@ -14,7 +14,7 @@
 // the result is still safe in the DB and renders from the server on next load.)
 
 import { useSyncExternalStore } from "react";
-import type { Problem } from "./types";
+import type { Problem, Lesson } from "./types";
 
 export type GenStatus = "idle" | "generating" | "error";
 
@@ -104,5 +104,77 @@ export function useGeneration(sessionId: string): GenState {
     (cb) => subscribe(sessionId, cb),
     () => getSnapshot(sessionId),
     () => EMPTY // server render: nothing in flight
+  );
+}
+
+// --- Lesson generation ------------------------------------------------------
+// Same survives-navigation pattern as problems, in a separate keyspace so a
+// lesson and a problem generation can be in flight for the same session at once.
+
+export type LessonGenState = {
+  status: GenStatus;
+  lesson: Lesson | null;
+  error: string | null;
+};
+
+type LessonEntry = { state: LessonGenState; listeners: Set<() => void> };
+
+const LESSON_EMPTY: LessonGenState = { status: "idle", lesson: null, error: null };
+const lessonStore = new Map<string, LessonEntry>();
+
+function lessonEntryFor(sessionId: string): LessonEntry {
+  let e = lessonStore.get(sessionId);
+  if (!e) {
+    e = { state: LESSON_EMPTY, listeners: new Set() };
+    lessonStore.set(sessionId, e);
+  }
+  return e;
+}
+
+function setLessonState(e: LessonEntry, next: LessonGenState) {
+  e.state = next;
+  for (const listener of e.listeners) listener();
+}
+
+// Kick off a lesson generation. No-op if one is already running for this session.
+export function startLessonGeneration(body: GenerateBody) {
+  const e = lessonEntryFor(body.sessionId);
+  if (e.state.status === "generating") return;
+
+  setLessonState(e, { status: "generating", lesson: e.state.lesson, error: null });
+
+  fetch("/api/generate-lesson", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const { error } = await res.json().catch(() => ({ error: "" }));
+        throw new Error(error || "Lesson generation failed — try again.");
+      }
+      return (await res.json()) as Lesson;
+    })
+    .then((lesson) => setLessonState(e, { status: "idle", lesson, error: null }))
+    .catch((err) =>
+      setLessonState(e, {
+        status: "error",
+        lesson: e.state.lesson,
+        error: err instanceof Error ? err.message : "Lesson generation failed — try again.",
+      })
+    );
+}
+
+export function useLessonGeneration(sessionId: string): LessonGenState {
+  return useSyncExternalStore(
+    (cb) => {
+      const e = lessonEntryFor(sessionId);
+      e.listeners.add(cb);
+      return () => {
+        e.listeners.delete(cb);
+      };
+    },
+    () => lessonStore.get(sessionId)?.state ?? LESSON_EMPTY,
+    () => LESSON_EMPTY
   );
 }

@@ -4,6 +4,7 @@ import LearningHistory, { type HistoryItem } from "./LearningHistory";
 export type StudentCardData = {
   id: string;
   name: string;
+  subject: string;
   level: string;
   rate: number;
   recentTopics: HistoryItem[]; // last 3, most recent first
@@ -20,6 +21,9 @@ export default function StudentCard({ student }: { student: StudentCardData }) {
           <Link href={`/students/${student.id}`} className="font-semibold text-blue-600 hover:underline">
             {student.name}
           </Link>
+          {student.subject && (
+            <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{student.subject}</span>
+          )}
         </div>
         <span className="shrink-0 font-mono text-sm text-gray-700">${student.rate}</span>
       </div>

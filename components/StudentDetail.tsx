@@ -2,17 +2,20 @@
 
 import { useState } from "react";
 import { SaveIndicator, type SaveStatus } from "./SaveIndicator";
+import { getProfile, PROFILE_OPTIONS } from "@/lib/subjects";
 
 export type StudentDetailData = {
   id: string;
   name: string;
+  subject: string;
+  generatorProfile: string;
   level: string;
   rate: number;
   notes: string;
   meetLink: string | null;
 };
 
-type Field = "level" | "rate" | "notes";
+type Field = "subject" | "generatorProfile" | "level" | "rate" | "notes";
 
 export default function StudentDetail({
   student,
@@ -21,15 +24,25 @@ export default function StudentDetail({
   student: StudentDetailData;
   gcalConfigured: boolean;
 }) {
+  const [subject, setSubject] = useState(student.subject);
+  const [generatorProfile, setGeneratorProfile] = useState(student.generatorProfile);
+  // Advanced control — collapsed by default so it doesn't add to the form's weight;
+  // most tutors never change it (new students are all "General").
+  const [showSource, setShowSource] = useState(false);
   const [level, setLevel] = useState(student.level);
   const [rate, setRate] = useState(String(student.rate));
   const [notes, setNotes] = useState(student.notes);
   const [saved, setSaved] = useState({
+    subject: student.subject,
+    generatorProfile: student.generatorProfile,
     level: student.level,
     rate: String(student.rate),
     notes: student.notes,
   });
   const [status, setStatus] = useState<SaveStatus>("idle");
+
+  // The level field's helper text depends on the chosen generator.
+  const profile = getProfile(generatorProfile);
 
   // Meet link state — separate from the shared status so the indicator doesn't
   // flicker when other fields save.
@@ -144,11 +157,58 @@ export default function StudentDetail({
       </div>
 
       <div>
-        <label className="block text-sm font-semibold text-gray-500">Level</label>
-        <p className="text-xs text-gray-400">
-          Calibration string for the generator — the difficulty (competition + problem-number band)
-          is inferred from this text, so keep it specific, e.g. &ldquo;AIME, problems 10–15&rdquo;.
-        </p>
+        <label className="block text-sm font-semibold text-gray-500">Subject</label>
+        <p className="text-xs text-gray-400">What you tutor this student in, e.g. &ldquo;Spanish&rdquo;, &ldquo;AP Physics&rdquo;, &ldquo;Competition Math&rdquo;.</p>
+        <input
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          onBlur={() => saveField("subject", subject)}
+          placeholder="Subject"
+          className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+        />
+      </div>
+
+      <div>
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-semibold text-gray-500">Problem source</label>
+          {!showSource && (
+            <button
+              type="button"
+              onClick={() => setShowSource(true)}
+              className="text-xs text-blue-600 hover:underline"
+            >
+              Change
+            </button>
+          )}
+        </div>
+        {!showSource ? (
+          <p className="text-sm text-gray-700">{profile.label}</p>
+        ) : (
+          <>
+            <p className="text-xs text-gray-400">
+              &ldquo;General&rdquo; works for any subject. &ldquo;Competition Math&rdquo; draws on a bank of real AMC / AIME / F=ma contest problems &mdash; only pick it for math-contest prep.
+            </p>
+            <select
+              value={generatorProfile}
+              onChange={(e) => {
+                setGeneratorProfile(e.target.value);
+                saveField("generatorProfile", e.target.value);
+              }}
+              className="mt-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
+            >
+              {PROFILE_OPTIONS.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+      </div>
+
+      <div>
+        <label className="block text-sm font-semibold text-gray-500">Level / goals</label>
+        <p className="text-xs text-gray-400">{profile.levelHelp}</p>
         <textarea
           value={level}
           onChange={(e) => setLevel(e.target.value)}

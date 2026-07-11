@@ -6,8 +6,12 @@ import { useRouter } from "next/navigation";
 import { pad, formatSessionDate } from "@/lib/format";
 import { SaveIndicator, type SaveStatus } from "./SaveIndicator";
 import ProblemSet, { type Problem } from "./ProblemSet";
-import { downloadProblemsPdf } from "@/lib/download-problems";
-import { startGeneration, useGeneration } from "@/lib/generation-store";
+import LessonView from "./LessonView";
+import type { Lesson } from "@/lib/types";
+import { downloadProblemsPdf, downloadLessonPdf } from "@/lib/download-problems";
+import { downloadProblemsDocx, downloadLessonDocx } from "@/lib/download-docx";
+import { uiLabels } from "@/lib/subjects";
+import { startGeneration, useGeneration, startLessonGeneration, useLessonGeneration } from "@/lib/generation-store";
 
 const DURATIONS = [30, 45, 60, 90, 120];
 
@@ -19,12 +23,14 @@ export type SessionDetailData = {
   paid: boolean;
   amount: number;
   problems: Problem[] | null;
+  lesson: Lesson | null;
   googleEventId: string | null;
   meetLink: string | null;
   student: {
     id: string;
     name: string;
     level: string;
+    generatorProfile: string;
   };
 };
 
@@ -37,6 +43,10 @@ export default function SessionDetail({
 }) {
   const { id } = session;
   const router = useRouter();
+
+  // Practice vocabulary is profile-aware: math keeps "Problem"/mono answers, every
+  // other subject gets neutral "Exercise"/prose. Single source of truth in lib/subjects.
+  const labels = uiLabels(session.student.generatorProfile);
 
   // Canonical schedule state (header reflects it after a save).
   const [startIso, setStartIso] = useState(session.start);
@@ -73,6 +83,8 @@ export default function SessionDetail({
 
   const [problems, setProblems] = useState<Problem[]>(session.problems ?? []);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [lessonDownloadError, setLessonDownloadError] = useState<string | null>(null);
+  const [lesson, setLesson] = useState<Lesson | null>(session.lesson);
 
   // Generation lives in a module-level store keyed by session id, so it keeps
   // running (and its result is recovered) when you navigate away and return.
@@ -80,11 +92,19 @@ export default function SessionDetail({
   const generating = gen.status === "generating";
   const genError = gen.status === "error" ? gen.error : null;
 
+  const lessonGen = useLessonGeneration(id);
+  const generatingLesson = lessonGen.status === "generating";
+  const lessonError = lessonGen.status === "error" ? lessonGen.error : null;
+
   // Adopt the latest generated set whenever the store produces a new result —
   // including one that finished while this component was unmounted.
   useEffect(() => {
     if (gen.problems) setProblems(gen.problems);
   }, [gen.problems]);
+
+  useEffect(() => {
+    if (lessonGen.lesson) setLesson(lessonGen.lesson);
+  }, [lessonGen.lesson]);
 
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
@@ -150,6 +170,41 @@ export default function SessionDetail({
     // Fire-and-forget into the store; it owns the fetch and survives navigation.
     // The route persists problems server-side; the store delivers them back here.
     startGeneration({ studentId: session.student.id, sessionId: id, topic });
+  }
+
+  function generateLessonNow() {
+    startLessonGeneration({ studentId: session.student.id, sessionId: id, topic });
+  }
+
+  // Downloadable lesson files. PDF opens a print window (needs pop-ups); .docx builds
+  // a Blob and saves directly. Each file is a student worksheet followed by a separate
+  // tutor answer key. Vocabulary/answer styling follow the subject profile.
+  const POPUP_ERR = "Couldn't open the print window — allow pop-ups and retry.";
+  const DOCX_ERR = "Couldn't build the Word file — try again.";
+  const fileOpts = () => ({
+    startIso,
+    studentName: session.student.name,
+    topic,
+    isMath: labels.isMath,
+  });
+
+  function problemsPdf() {
+    setDownloadError(null);
+    if (!downloadProblemsPdf(problems, { ...fileOpts(), item: labels.item })) setDownloadError(POPUP_ERR);
+  }
+  async function problemsDocx() {
+    setDownloadError(null);
+    if (!(await downloadProblemsDocx(problems, { ...fileOpts(), item: labels.item }))) setDownloadError(DOCX_ERR);
+  }
+  function lessonPdf() {
+    if (!lesson) return;
+    setLessonDownloadError(null);
+    if (!downloadLessonPdf(lesson, fileOpts())) setLessonDownloadError(POPUP_ERR);
+  }
+  async function lessonDocx() {
+    if (!lesson) return;
+    setLessonDownloadError(null);
+    if (!(await downloadLessonDocx(lesson, fileOpts()))) setLessonDownloadError(DOCX_ERR);
   }
 
   function openEdit() {
@@ -370,37 +425,66 @@ export default function SessionDetail({
         />
       </section>
 
-      {/* Practice problems */}
+      {/* Lesson */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-gray-500">Practice problems</h2>
-        <div className="flex flex-wrap items-center gap-4">
+        <h2 className="text-sm font-semibold text-gray-500">Lesson</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={generateLessonNow}
+            disabled={generatingLesson}
+            className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
+          >
+            {generatingLesson ? "Generating…" : lesson ? "Regenerate lesson" : "Generate lesson"}
+          </button>
+          {lesson && (
+            <span className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-sm">
+              <span className="text-xs uppercase tracking-wide text-gray-400">Download</span>
+              <button onClick={lessonPdf} className="font-medium text-blue-600 hover:underline">
+                PDF
+              </button>
+              <span className="text-gray-300" aria-hidden>
+                ·
+              </span>
+              <button onClick={lessonDocx} className="font-medium text-blue-600 hover:underline">
+                Word
+              </button>
+            </span>
+          )}
+        </div>
+        {lessonError && <p className="text-sm text-red-600">{lessonError}</p>}
+        {lessonDownloadError && <p className="text-sm text-red-600">{lessonDownloadError}</p>}
+        {lesson && <LessonView lesson={lesson} isMath={labels.isMath} />}
+      </section>
+
+      {/* Practice */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-500">{labels.sectionTitle}</h2>
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={generate}
             disabled={generating}
             className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
           >
-            {generating ? "Generating…" : "Generate problems"}
+            {generating ? "Generating…" : labels.generate}
           </button>
           {problems.length > 0 && (
-            <button
-              onClick={() => {
-                setDownloadError(null);
-                const ok = downloadProblemsPdf(problems, {
-                  startIso,
-                  studentName: session.student.name,
-                  topic,
-                });
-                if (!ok) setDownloadError("Couldn't open the print window — allow pop-ups and retry.");
-              }}
-              className="rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
-            >
-              Download questions
-            </button>
+            <span className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-sm">
+              <span className="text-xs uppercase tracking-wide text-gray-400">Download</span>
+              <button onClick={problemsPdf} className="font-medium text-blue-600 hover:underline">
+                PDF
+              </button>
+              <span className="text-gray-300" aria-hidden>
+                ·
+              </span>
+              <button onClick={problemsDocx} className="font-medium text-blue-600 hover:underline">
+                Word
+              </button>
+            </span>
           )}
         </div>
         {genError && <p className="text-sm text-red-600">{genError}</p>}
         {downloadError && <p className="text-sm text-red-600">{downloadError}</p>}
-        <ProblemSet problems={problems} />
+        <ProblemSet problems={problems} item={labels.item} isMath={labels.isMath} />
       </section>
 
       {/* Delete */}

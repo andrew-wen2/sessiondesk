@@ -24,7 +24,9 @@ export default async function RootLayout({
     <html lang="en">
       <body className="bg-gray-50 text-gray-900 antialiased">
         <Nav gcalAvailable={isGcalAppConfigured()} gcalConnected={gcalConnected} />
-        <main className="mx-auto max-w-4xl px-4 py-8">{children}</main>
+        {/* Full-bleed shell: the calendar fills the width; reading pages re-constrain
+            themselves with `mx-auto max-w-4xl` so their line-length stays comfortable. */}
+        <main className="w-full px-4 py-8 sm:px-6 lg:px-8">{children}</main>
       </body>
     </html>
   );

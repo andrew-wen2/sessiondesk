@@ -36,7 +36,9 @@ model Student {
   userId         String
   name           String
   parentContact  String?
-  level          String // calibration string fed to the generator; competition + difficulty band are inferred from it; keep specific
+  subject        String @default("") // human-facing subject label (e.g. "Spanish", "AP Physics", "Competition Math"); shown in UI + injected into generation prompts
+  generatorProfile String @default("general") // selects the generation engine: "general" (corpus-free, any subject) | "competition-math" (AMC/AIME/F=ma corpus pipeline). Unknown values fall back to "general".
+  level          String // free-text calibration/goals string fed to the generator; for competition-math the competition + difficulty band are inferred from it; keep specific
   rate           Int // default dollars per session
   notes          String?
   meetLink       String?  // one Google Meet URL, mirrored to all of this student's GCal events
@@ -77,6 +79,7 @@ model Session {
   topic         String   @default("")
   homework      String   @default("")
   problems      Json?
+  lesson        Json?    // generated lesson blob (title/objectives/sections/workedExamples/practice); parallel to `problems`
   amount        Int
   paid          Boolean  @default(false)
   googleEventId String?  @unique

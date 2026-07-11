@@ -54,5 +54,9 @@ export default async function PaymentsPage() {
   const { mon, sun } = getWeekBounds();
   const thisWeek = sessions.filter((s) => s.start >= mon && s.start < sun).length;
 
-  return <PaymentsLedger groups={groups} thisWeek={thisWeek} />;
+  return (
+    <div className="mx-auto max-w-4xl">
+      <PaymentsLedger groups={groups} thisWeek={thisWeek} />
+    </div>
+  );
 }
