@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { CalendarSession } from "@/lib/types";
@@ -118,6 +118,13 @@ export default function Calendar({
   const dragRef = useRef<{ iso: string; rectTop: number; startMin: number } | null>(null);
   const studentQuery = studentFilter ? `&student=${studentFilter.id}` : "";
 
+  // Remember the last-used view so a bare `/` (Calendar nav link) reopens it. Month
+  // navigation emits param-less URLs, so the server reads this cookie for the default;
+  // writing it on every view change keeps the cookie in sync with what's on screen.
+  useEffect(() => {
+    document.cookie = `calView=${view}; path=/; max-age=31536000; samesite=lax`;
+  }, [view]);
+
   // Bucket sessions by local date string so a week spanning two months still groups
   // correctly; keep each day time-sorted for the week columns.
   const byDate = useMemo(() => {
@@ -186,12 +193,16 @@ export default function Calendar({
     return cells;
   })();
 
-  function DayCell({ date }: { date: Date }) {
+  // `openUp` flips the day's popovers to grow upward. The month grid is `overflow-hidden`
+  // (for its rounded corners), so a downward popover in the bottom rows would be clipped —
+  // cutting off the preview's "Open" link. Bottom-row cells anchor to the bottom instead.
+  function DayCell({ date, openUp }: { date: Date; openUp: boolean }) {
     const iso = dateKey(date);
     const daySessions = byDate.get(iso) ?? [];
     const visible = daySessions.slice(0, 4);
     const extra = daySessions.length - visible.length;
     const isToday = iso === todayKey;
+    const popoverAnchor = openUp ? "bottom-8" : "top-8";
 
     return (
       <div
@@ -222,7 +233,7 @@ export default function Calendar({
         {openMore === iso && (
           <div
             onClick={(e) => e.stopPropagation()}
-            className="absolute left-1 right-1 top-8 z-20 space-y-1 rounded border border-gray-200 bg-white p-1 shadow-lg"
+            className={`absolute left-1 right-1 z-20 max-h-64 space-y-1 overflow-y-auto rounded border border-gray-200 bg-white p-1 shadow-lg ${popoverAnchor}`}
           >
             {daySessions.map((s) => (
               <SessionChip key={s.id} session={s} onSelect={setPreview} showTime />
@@ -231,7 +242,11 @@ export default function Calendar({
         )}
 
         {preview && dateKey(new Date(preview.start)) === iso && (
-          <PreviewPopover session={preview} onClose={() => setPreview(null)} />
+          <PreviewPopover
+            session={preview}
+            onClose={() => setPreview(null)}
+            className={`left-1 right-1 ${popoverAnchor}`}
+          />
         )}
       </div>
     );
@@ -254,6 +269,28 @@ export default function Calendar({
   const hours = Array.from({ length: rangeEnd - rangeStart }, (_, i) => rangeStart + i);
   const gridHeight = (rangeEnd - rangeStart) * HOUR_PX;
   const nowMin = today.getHours() * 60 + today.getMinutes();
+
+  // Precompute each week day's time-grid layout once. Drag-to-create fires setDragSel on
+  // every pointer move, re-rendering the whole grid; without this the (non-trivial) overlap
+  // layout would be recomputed for all 7 columns on every frame of a drag.
+  const positionedByDate = useMemo(() => {
+    const m = new Map<string, Positioned[]>();
+    if (view !== "week") return m;
+    const base = new Date(`${weekStart}T00:00:00`);
+    for (let i = 0; i < 7; i++) {
+      const iso = dateKey(addDays(base, i));
+      m.set(iso, positionDay(byDate.get(iso) ?? [], rangeStart));
+    }
+    return m;
+  }, [view, weekStart, byDate, rangeStart]);
+
+  // Emptiness is judged over the visible days only — the page over-fetches neighboring
+  // days (timezone padding) which must not suppress the empty-state message.
+  const shownKeys =
+    view === "week"
+      ? weekCells.map(dateKey)
+      : monthCells.filter((d): d is Date => d !== null).map(dateKey);
+  const hasVisible = shownKeys.some((k) => (byDate.get(k)?.length ?? 0) > 0);
 
   // Drag-to-create: press on a day column and sweep out a time range; release opens the
   // Add-session modal prefilled with that start + length. A tiny sweep counts as a click
@@ -312,7 +349,7 @@ export default function Calendar({
   // reconcile in place instead of remounting the whole grid.
   function renderWeekColumn(date: Date, dayIndex: number) {
     const iso = dateKey(date);
-    const positioned = positionDay(byDate.get(iso) ?? [], rangeStart);
+    const positioned = positionedByDate.get(iso) ?? [];
     const showNow = iso === todayKey && nowMin >= rangeStart * 60 && nowMin < rangeEnd * 60;
     const sel =
       dragSel && dragSel.iso === iso
@@ -382,15 +419,26 @@ export default function Calendar({
           </div>
         )}
 
-        {/* preview — flips to the right edge for the later columns so it doesn't run off-screen */}
-        {preview && dateKey(new Date(preview.start)) === iso && (
-          <PreviewPopover
-            session={preview}
-            onClose={() => setPreview(null)}
-            className={`w-64 ${dayIndex >= 4 ? "right-0" : "left-0"}`}
-            style={{ top: Math.max((positioned.find((p) => p.s.id === preview.id)?.top ?? 0) - 4, 0) }}
-          />
-        )}
+        {/* preview — flips to the right edge for the later columns, and upward for events in
+            the lower half of the grid, so it doesn't run off either screen edge */}
+        {preview &&
+          dateKey(new Date(preview.start)) === iso &&
+          (() => {
+            const evTop = positioned.find((p) => p.s.id === preview.id)?.top ?? 0;
+            const openUp = evTop > gridHeight / 2;
+            return (
+              <PreviewPopover
+                session={preview}
+                onClose={() => setPreview(null)}
+                className={`w-64 ${dayIndex >= 4 ? "right-0" : "left-0"}`}
+                style={
+                  openUp
+                    ? { bottom: Math.max(gridHeight - evTop, 0) }
+                    : { top: Math.max(evTop - 4, 0) }
+                }
+              />
+            );
+          })()}
       </div>
     );
   }
@@ -503,13 +551,17 @@ export default function Calendar({
             date === null ? (
               <div key={`e${i}`} className="min-h-32 min-w-0 bg-gray-50" />
             ) : (
-              <DayCell key={dateKey(date)} date={date} />
+              <DayCell
+                key={dateKey(date)}
+                date={date}
+                openUp={Math.floor(i / 7) >= monthCells.length / 7 - 2}
+              />
             )
           )}
         </div>
       )}
 
-      {sessions.length === 0 && (
+      {!hasVisible && (
         <p className="text-sm text-gray-500">
           No sessions this {view} — {view === "week" ? "drag across a day" : "click a day"} to add one.
         </p>

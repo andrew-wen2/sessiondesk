@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { requireUserId } from "@/lib/session";
 import Calendar from "@/components/Calendar";
@@ -16,7 +17,17 @@ export default async function CalendarPage({
 }) {
   const userId = await requireUserId();
   const { month: monthParam, week: weekParam, view: viewParam, student: studentId } = await searchParams;
-  const view = viewParam === "week" ? "week" : "month";
+  // View preference: an explicit ?view= wins (deep links, week prev/next), otherwise fall
+  // back to the viewer's last-used view stored in the `calView` cookie (written client-side
+  // by the calendar), defaulting to month. This makes the Calendar nav link and bare `/`
+  // reopen whichever view the tutor was last in.
+  const savedView = (await cookies()).get("calView")?.value;
+  const view: "month" | "week" =
+    viewParam === "week" || viewParam === "month"
+      ? viewParam
+      : savedView === "week"
+        ? "week"
+        : "month";
 
   const today = new Date();
   let start: Date;
@@ -40,12 +51,21 @@ export default async function CalendarPage({
     weekStart = `${s.getFullYear()}-${pad(s.getMonth() + 1)}-${pad(s.getDate())}`;
   }
 
+  // The server runs in UTC but the client buckets sessions by the viewer's LOCAL day,
+  // so these UTC day-boundaries can sit up to ~14h off the local week/month edges — which
+  // was dropping e.g. Saturday-evening sessions from the week query. Over-fetch a day on
+  // each side; the client only renders the days it shows, so the extra rows are harmless.
+  const queryStart = new Date(start);
+  queryStart.setDate(queryStart.getDate() - 1);
+  const queryEnd = new Date(end);
+  queryEnd.setDate(queryEnd.getDate() + 1);
+
   // Calendar chips + preview need id/start/duration/paid/amount/topic and the
   // student name — skip problems/lesson (heavy Json) and other unused fields.
   const rows = await prisma.session.findMany({
     where: {
       userId,
-      start: { gte: start, lt: end },
+      start: { gte: queryStart, lt: queryEnd },
       ...(studentId ? { studentId } : {}),
     },
     select: {
