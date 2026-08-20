@@ -1,13 +1,16 @@
 {
   "name": "session-desk",
   "version": "0.1.0",
+  "description": "Tutoring session manager: calendar synced to Google Calendar, student roster, and Claude-generated practice problems calibrated per student.",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "next lint",
-    "check": "tsx scripts/check-lib.ts",
+    "check": "vitest run",
+    "test": "vitest run",
     "ingest:corpus": "tsx scripts/ingest-corpus.ts",
     "ingest:fma": "tsx scripts/ingest-fma.ts",
     "cleanup:corpus": "tsx scripts/cleanup-corpus.ts",
@@ -54,6 +57,7 @@
     "tailwindcss": "^3.4.17",
     "ts-node": "^10.9.2",
     "tsx": "^4.22.4",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
   }
 }
