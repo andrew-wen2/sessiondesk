@@ -2,7 +2,7 @@ import katex from "katex";
 import type { Problem, Lesson } from "@/lib/types";
 import { splitMath } from "@/lib/math-segments";
 import { splitCode } from "@/lib/rich-segments";
-import { pad } from "@/lib/format";
+import { hasMath, pad } from "@/lib/format";
 
 // Render a string into safe HTML, matching what components/RichContent shows on
 // screen: fenced code blocks (```lang … ```) become <pre>, and the non-code
@@ -49,7 +49,7 @@ export function problemsFilename(startIso: string, studentName: string, suffix =
   return `${date}-${name}${suffix}`;
 }
 
-type FileOpts = { startIso: string; studentName: string; topic?: string; isMath?: boolean };
+type FileOpts = { startIso: string; studentName: string; topic?: string };
 
 // Shared print-window plumbing: write the doc, wait for the KaTeX stylesheet, print.
 // The document title becomes the suggested filename. Returns false if the pop-up was
@@ -102,10 +102,9 @@ function printDoc(filename: string, bodyHtml: string): boolean {
 
 // Problems → a student worksheet (questions only) followed by a tutor answer key
 // (answer + solution) on a fresh page.
-export function downloadProblemsPdf(problems: Problem[], opts: FileOpts & { item?: string }): boolean {
+export function downloadProblemsPdf(problems: Problem[], opts: FileOpts): boolean {
   if (problems.length === 0) return false;
-  const item = opts.item ?? "Problem";
-  const mono = opts.isMath === false ? "" : "mono";
+  const item = "Problem";
   const filename = problemsFilename(opts.startIso, opts.studentName);
 
   const worksheet = problems
@@ -123,7 +122,7 @@ export function downloadProblemsPdf(problems: Problem[], opts: FileOpts & { item
       (p, i) => `
       <div class="item">
         <div class="label">${escapeHtml(item)} ${i + 1}</div>
-        ${hasText(p.answer) ? `<div class="answer ${mono}"><span class="k">Answer: </span>${renderRich(p.answer)}</div>` : ""}
+        ${hasText(p.answer) ? `<div class="answer ${hasMath(p.answer) ? "mono" : ""}"><span class="k">Answer: </span>${renderRich(p.answer)}</div>` : ""}
         <div class="body">${renderRich(p.solution)}</div>
       </div>`
     )
@@ -143,7 +142,6 @@ export function downloadProblemsPdf(problems: Problem[], opts: FileOpts & { item
 // prompts, practice questions) then a tutor answer key (worked-example solutions +
 // practice answers/solutions) on a fresh page.
 export function downloadLessonPdf(lesson: Lesson, opts: FileOpts): boolean {
-  const mono = opts.isMath === false ? "" : "mono";
   const filename = problemsFilename(opts.startIso, opts.studentName, "-lesson");
 
   const objectives = lesson.objectives.length
@@ -172,7 +170,7 @@ export function downloadLessonPdf(lesson: Lesson, opts: FileOpts): boolean {
     ? `<h3>Practice</h3>${lesson.practice
         .map(
           (p, i) => `<div class="item"><div class="label">${i + 1}.</div>${
-            hasText(p.answer) ? `<div class="answer ${mono}"><span class="k">Answer: </span>${renderRich(p.answer)}</div>` : ""
+            hasText(p.answer) ? `<div class="answer ${hasMath(p.answer) ? "mono" : ""}"><span class="k">Answer: </span>${renderRich(p.answer)}</div>` : ""
           }<div class="body">${renderRich(p.solution)}</div></div>`
         )
         .join("")}`

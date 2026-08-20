@@ -7,6 +7,7 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "next lint",
+    "check": "tsx scripts/check-lib.ts",
     "ingest:corpus": "tsx scripts/ingest-corpus.ts",
     "ingest:fma": "tsx scripts/ingest-fma.ts",
     "cleanup:corpus": "tsx scripts/cleanup-corpus.ts",
@@ -17,6 +18,13 @@
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
   },
+  "//browserslist": "Next's default client target is Safari 12, which makes SWC downlevel class fields. That transform miscompiles docx's ImageRun (a class field in a derived constructor) into `super(..._args)` inside a nested function — invalid JS that throws at parse time and kills whichever chunk it lands in. Modern targets keep class fields native and the library parses. This is an internal tool; nobody opens it on a 2018 browser.",
+  "browserslist": [
+    "chrome >= 111",
+    "edge >= 111",
+    "firefox >= 111",
+    "safari >= 16.4"
+  ],
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
     "@prisma/client": "^6.1.0",

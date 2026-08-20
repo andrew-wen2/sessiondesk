@@ -1,32 +1,42 @@
 import type { Metadata } from "next";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import "katex/dist/katex.min.css";
-import Nav from "@/components/Nav";
-import { getCurrentUserId } from "@/lib/session";
-import { isGcalAppConfigured, isGcalConnected } from "@/lib/gcal-account";
+import AppShell from "@/components/AppShell";
+
+// Self-hosted by Next at build time — no external stylesheet request, no FOUT, and
+// the app keeps working with no network at runtime. The variables are what
+// tailwind.config.ts's fontFamily points at.
+const sans = Inter({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
+});
+
+const mono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "Session Desk",
   description: "Tutoring session manager",
 };
 
-export default async function RootLayout({
+// Not async and issues no queries: the nav's Calendar connect/disconnect controls
+// moved to /settings, which removed the per-render isGcalConnected() lookup that
+// every page in the app was paying for. AppShell is a client component, but `children`
+// is passed through as a prop, so the pages inside it still render on the server.
+export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // Per-user Calendar state for the nav. No user (login/register) → not connected;
-  // the Nav hides its links on those routes anyway.
-  const userId = await getCurrentUserId();
-  const gcalConnected = userId ? await isGcalConnected(userId) : false;
-
   return (
-    <html lang="en">
-      <body className="bg-gray-50 text-gray-900 antialiased">
-        <Nav gcalAvailable={isGcalAppConfigured()} gcalConnected={gcalConnected} />
-        {/* Full-bleed shell: the calendar fills the width; reading pages re-constrain
-            themselves with `mx-auto max-w-4xl` so their line-length stays comfortable. */}
-        <main className="w-full px-4 py-8 sm:px-6 lg:px-8">{children}</main>
+    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
+      <body className="font-sans">
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

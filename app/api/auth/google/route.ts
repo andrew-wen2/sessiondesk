@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   if (!userId) return NextResponse.redirect(new URL("/login", request.url));
 
   if (error) {
-    return NextResponse.redirect(new URL("/?gcal=denied", request.url));
+    return NextResponse.redirect(new URL("/settings?gcal=denied", request.url));
   }
   if (!code) {
     return NextResponse.json({ error: "Missing authorization code." }, { status: 400 });
@@ -35,16 +35,16 @@ export async function GET(request: Request) {
       // Google only returns a refresh token with prompt=consent + offline access
       // (both set on the auth URL). A missing one means we can't mirror later.
       console.error("[/api/auth/google] no refresh_token returned");
-      return NextResponse.redirect(new URL("/?gcal=error", request.url));
+      return NextResponse.redirect(new URL("/settings?gcal=error", request.url));
     }
     await prisma.user.update({
       where: { id: userId },
       data: { googleRefreshToken: tokens.refresh_token },
     });
-    return NextResponse.redirect(new URL("/?gcal=connected", request.url));
+    return NextResponse.redirect(new URL("/settings?gcal=connected", request.url));
   } catch (e) {
     console.error("[/api/auth/google] token exchange failed:", e);
-    return NextResponse.redirect(new URL("/?gcal=error", request.url));
+    return NextResponse.redirect(new URL("/settings?gcal=error", request.url));
   }
 }
 

@@ -4,6 +4,9 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GoogleSignInButton } from "@/components/GoogleSignInButton";
+import AuthShell, { AuthError, Divider } from "@/components/AuthShell";
+import { Field, Input } from "@/components/ui/Field";
+import Button from "@/components/ui/Button";
 
 export function RegisterForm({ googleEnabled }: { googleEnabled: boolean }) {
   const router = useRouter();
@@ -37,62 +40,52 @@ export function RegisterForm({ googleEnabled }: { googleEnabled: boolean }) {
   }
 
   return (
-    <div className="mx-auto max-w-md">
-      <h1 className="mb-6 text-xl font-bold">Create account</h1>
+    <AuthShell title="Create account" subtitle="Set up your tutoring desk.">
       <form onSubmit={onSubmit} className="space-y-4">
-        <div>
-          <label htmlFor="email" className="mb-1 block text-sm text-gray-700">
-            Email
-          </label>
-          <input
+        <Field label="Email" htmlFor="email">
+          <Input
             id="email"
             type="email"
             autoComplete="username"
             autoFocus
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-base focus:border-blue-500 focus:outline-none"
           />
-        </div>
-        <div>
-          <label htmlFor="password" className="mb-1 block text-sm text-gray-700">
-            Password
-          </label>
-          <input
+        </Field>
+        <Field label="Password" htmlFor="password" hint="At least 8 characters.">
+          <Input
             id="password"
             type="password"
             autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-base focus:border-blue-500 focus:outline-none"
           />
-          <p className="mt-1 text-sm text-gray-500">At least 8 characters.</p>
-        </div>
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        <button
+        </Field>
+        {error && <AuthError>{error}</AuthError>}
+        <Button
           type="submit"
-          disabled={busy || !email || password.length < 8}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white transition-colors duration-150 hover:bg-blue-700 disabled:opacity-50"
+          loading={busy}
+          disabled={!email || password.length < 8}
+          className="w-full"
         >
           {busy ? "Creating…" : "Create account"}
-        </button>
+        </Button>
       </form>
       {googleEnabled && (
         <>
-          <div className="my-4 flex items-center gap-3 text-sm text-gray-500">
-            <span className="h-px flex-1 bg-gray-200" />
-            or
-            <span className="h-px flex-1 bg-gray-200" />
-          </div>
+          <Divider />
           <GoogleSignInButton label="Continue with Google" />
         </>
       )}
-      <p className="mt-4 text-sm text-gray-500">
+      <p className="mt-6 text-center text-sm text-muted">
         Already have an account?{" "}
-        <Link href="/login" className="font-semibold text-blue-600">
+        <Link
+          href="/login"
+          className="font-medium text-primary transition-colors duration-150 hover:text-primary-hover"
+        >
           Sign in
         </Link>
       </p>
-    </div>
+    </AuthShell>
   );
 }

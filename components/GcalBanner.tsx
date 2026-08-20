@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { AlertCircle, CircleCheck, X } from "./icons";
 
 // Inline feedback after the Google OAuth redirect lands on `/?gcal=...`. The
 // callback stores the user's refresh token on connect, so success is terminal —
@@ -22,9 +23,15 @@ function bannerFor(status: string):
 }
 
 const TONE = {
-  ok: "border-green-100 bg-green-100 text-green-600",
-  warn: "border-orange-100 bg-orange-100 text-orange-500",
-  error: "border-red-200 bg-white text-red-600",
+  ok: "border-good/25 bg-good-soft text-good",
+  warn: "border-warn/25 bg-warn-soft text-warn",
+  error: "border-danger/25 bg-danger-soft text-danger",
+};
+
+const ICON = {
+  ok: CircleCheck,
+  warn: AlertCircle,
+  error: AlertCircle,
 };
 
 function Banner() {
@@ -46,16 +53,22 @@ function Banner() {
     router.replace(qs ? `${pathname}?${qs}` : pathname);
   }
 
+  const Icon = ICON[banner.tone];
+
   return (
     <div
-      className={`flex items-start justify-between gap-4 rounded-lg border px-4 py-3 text-sm ${TONE[banner.tone]}`}
+      className={`flex items-center justify-between gap-4 rounded-card border px-4 py-3 text-sm ${TONE[banner.tone]}`}
     >
-      <span>{banner.text}</span>
+      <span className="flex items-center gap-2">
+        <Icon className="h-4 w-4 shrink-0" />
+        {banner.text}
+      </span>
       <button
         onClick={dismiss}
-        className="shrink-0 text-gray-500 transition-colors duration-150 hover:text-gray-900"
+        aria-label="Dismiss"
+        className="-mr-1 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors duration-150 hover:bg-ink/5"
       >
-        Dismiss
+        <X className="h-4 w-4" />
       </button>
     </div>
   );

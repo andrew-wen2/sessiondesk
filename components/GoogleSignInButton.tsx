@@ -5,7 +5,7 @@ export function GoogleSignInButton({ label }: { label: string }) {
   return (
     <a
       href="/api/auth/google/signin"
-      className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 transition-colors duration-150 hover:bg-gray-50"
+      className="flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-control border border-hairline-strong bg-surface px-4 text-sm font-medium text-ink-soft shadow-sm transition-colors duration-150 hover:bg-sunken"
     >
       <svg aria-hidden="true" viewBox="0 0 18 18" className="h-4 w-4">
         <path

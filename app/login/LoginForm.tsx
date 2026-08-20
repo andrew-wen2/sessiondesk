@@ -4,6 +4,9 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { GoogleSignInButton } from "@/components/GoogleSignInButton";
+import AuthShell, { AuthError, Divider } from "@/components/AuthShell";
+import { Field, Input } from "@/components/ui/Field";
+import Button from "@/components/ui/Button";
 
 export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
   const router = useRouter();
@@ -44,61 +47,52 @@ export function LoginForm({ googleEnabled }: { googleEnabled: boolean }) {
   }
 
   return (
-    <div className="mx-auto max-w-md">
-      <h1 className="mb-6 text-xl font-bold">Sign in</h1>
+    <AuthShell title="Sign in" subtitle="Welcome back.">
       <form onSubmit={onSubmit} className="space-y-4">
-        <div>
-          <label htmlFor="email" className="mb-1 block text-sm text-gray-700">
-            Email
-          </label>
-          <input
+        <Field label="Email" htmlFor="email">
+          <Input
             id="email"
             type="email"
             autoComplete="username"
             autoFocus
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-base focus:border-blue-500 focus:outline-none"
           />
-        </div>
-        <div>
-          <label htmlFor="password" className="mb-1 block text-sm text-gray-700">
-            Password
-          </label>
-          <input
+        </Field>
+        <Field label="Password" htmlFor="password">
+          <Input
             id="password"
             type="password"
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-base focus:border-blue-500 focus:outline-none"
           />
-        </div>
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        <button
+        </Field>
+        {error && <AuthError>{error}</AuthError>}
+        <Button
           type="submit"
-          disabled={busy || !email || !password}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white transition-colors duration-150 hover:bg-blue-700 disabled:opacity-50"
+          loading={busy}
+          disabled={!email || !password}
+          className="w-full"
         >
           {busy ? "Signing in…" : "Sign in"}
-        </button>
+        </Button>
       </form>
       {googleEnabled && (
         <>
-          <div className="my-4 flex items-center gap-3 text-sm text-gray-500">
-            <span className="h-px flex-1 bg-gray-200" />
-            or
-            <span className="h-px flex-1 bg-gray-200" />
-          </div>
+          <Divider />
           <GoogleSignInButton label="Continue with Google" />
         </>
       )}
-      <p className="mt-4 text-sm text-gray-500">
+      <p className="mt-6 text-center text-sm text-muted">
         No account?{" "}
-        <Link href="/register" className="font-semibold text-blue-600">
+        <Link
+          href="/register"
+          className="font-medium text-primary transition-colors duration-150 hover:text-primary-hover"
+        >
           Create one
         </Link>
       </p>
-    </div>
+    </AuthShell>
   );
 }

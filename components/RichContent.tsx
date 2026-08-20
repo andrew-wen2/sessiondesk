@@ -17,7 +17,7 @@ export default function RichContent({ text }: { text: string }) {
         seg.type === "code" ? (
           <pre
             key={i}
-            className="my-2 overflow-x-auto rounded border border-gray-200 bg-gray-50 p-3 text-xs font-mono text-gray-800"
+            className="my-2 overflow-x-auto rounded-control border border-hairline bg-sunken p-3 font-mono text-xs leading-relaxed text-ink"
           >
             <code>{seg.content}</code>
           </pre>

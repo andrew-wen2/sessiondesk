@@ -1,3 +1,77 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Design tokens — Session Desk.
+   Stored as RGB *channels*, not hex, so Tailwind's <alpha-value> opacity modifiers
+   work against them (bg-primary/10, bg-ink/40, ring-warn/20, …). tailwind.config.ts
+   only names these; change a value here and every surface in the app follows.
+   Light mode only — see the Non-goals section of CLAUDE.md. */
+@layer base {
+  :root {
+    /* Ground */
+    --canvas: 248 250 252;
+    --surface: 255 255 255;
+    --sunken: 241 245 249;
+    --hairline: 231 234 239;
+    --hairline-strong: 213 218 226;
+
+    /* Text. --faint is decorative only; it does not clear 4.5:1 and must never
+       carry meaning. Secondary text uses --muted (4.6:1 on --surface). */
+    --ink: 15 23 42;
+    --ink-soft: 51 65 85;
+    --muted: 100 116 139;
+    --faint: 148 163 184;
+
+    /* Action */
+    --primary: 79 70 229;
+    --primary-hover: 67 56 202;
+    --primary-soft: 238 242 255;
+
+    /* Status. good = paid, warn = owed/no-show, danger = destructive. */
+    --good: 5 150 105;
+    --good-soft: 236 253 245;
+    --warn: 234 88 12;
+    --warn-soft: 255 247 237;
+    --danger: 220 38 38;
+    --danger-soft: 254 242 242;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-canvas text-ink-soft antialiased;
+  }
+
+  /* One focus ring for the whole app. The auth inputs used to set focus:outline-none
+     with nothing in its place, which left keyboard users with no visible caret at all.
+     Nothing may remove this without putting an equivalent indicator back. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary/40 ring-offset-2 ring-offset-canvas;
+  }
+
+  ::selection {
+    @apply bg-primary/15 text-ink;
+  }
+
+  /* Money, times and dates sit in columns everywhere they appear, so the mono face
+     is always tabular — no per-site `tabular-nums` needed. */
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* The app's only motion is 150ms colour/shadow/transform on hover and the inline
+   button spinner. Both are still suppressed for anyone who asked for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
