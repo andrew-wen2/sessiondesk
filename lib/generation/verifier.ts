@@ -11,42 +11,42 @@
 // generation — they just filter bad items.
 
 import type { Problem, Anchor } from "@/lib/types";
+import type { GenerationPlan } from "@/lib/generation/plan";
 
 // --- Answer guard -----------------------------------------------------------
 
-// Reject problems the model didn't actually solve (placeholder answers) or whose
-// answer violates the competition's answer format.
-export function answerOk(p: Problem, competition?: string): boolean {
-  const a = (p.answer || "").trim();
-  if (!a) return false;
-  if (/\b(tbd|tba|todo|n\/?a|hint|see solution|to be determined|placeholder|unknown)\b/i.test(`${p.answer} ${p.solution}`))
-    return false;
-  if (/^\?+$/.test(a)) return false;
-  // No multiple-choice option letters as the answer (we generate free-response).
-  // "(C)" is never valid; a bare "C" is rejected for AMC (where MC leaks) but not
-  // physics, where a lone symbol like energy E can be a legitimate answer.
-  if (/^\(\s*[A-E]\s*\)$/.test(a)) return false;
-  if ((competition === "AMC10" || competition === "AMC12") && /^[A-E]$/.test(a)) return false;
-  // Only AIME's answer format is unambiguous enough to hard-enforce (integer
-  // 0–999). F=ma may be a letter A–E OR a value with units; AMC varies — for
-  // those, a real non-placeholder answer is enough (format is the prompt's job).
-  if (competition === "AIME") return /^\d{1,3}$/.test(a) && Number(a) <= 999;
-  return true;
-}
+// The model punts with one of these when it couldn't actually solve the problem.
+const PLACEHOLDER_RE =
+  /\b(tbd|tba|todo|n\/?a|hint|see solution|to be determined|placeholder|unknown)\b/i;
 
-// Answer guard for the general (non-competition) profile: subjects span math,
-// languages, coding, essays, so there is no single answer FORMAT to enforce, and
-// some content is open-ended (a writing prompt has no short answer). An empty
-// answer is therefore allowed; a non-empty answer is only rejected when it is a
-// placeholder / an MC option letter — never on format. `PLACEHOLDER_RE` and the
-// MC checks are shared with answerOk so the two guards can't drift.
-export function answerOkLenient(p: Problem): boolean {
+// One answer guard for every subject, keyed off the plan's answerFormat rather
+// than a stored engine choice. It enforces exactly what the prompt's
+// ANSWER_FORMAT_RULES told the model to produce — keep the two in step.
+//
+// The empty-answer rule is the important one: an empty answer means the model
+// declined to solve its own problem, and is only legitimate for genuinely
+// open-ended work ("open"). The old lenient guard accepted it for every
+// non-competition subject, which is how unsolved problems reached the page.
+export function answerOkFor(
+  p: Problem,
+  plan: Pick<GenerationPlan, "answerFormat" | "competition">
+): boolean {
   const a = (p.answer || "").trim();
-  if (!a) return true; // open-ended content is fine
-  if (/\b(tbd|tba|todo|n\/?a|hint|see solution|to be determined|placeholder|unknown)\b/i.test(`${p.answer} ${p.solution}`))
-    return false;
+  if (!a) return plan.answerFormat === "open";
+  if (PLACEHOLDER_RE.test(`${p.answer} ${p.solution}`)) return false;
   if (/^\?+$/.test(a)) return false;
-  if (/^\(\s*[A-E]\s*\)$/.test(a)) return false; // we generate free-response
+  // No multiple-choice option letters as the answer (everything is free-response).
+  // "(C)" is never valid anywhere.
+  if (/^\(\s*[A-E]\s*\)$/.test(a)) return false;
+  // A BARE "C" is rejected wherever a lone letter can't be a real answer. It can
+  // be one in symbolic physics (energy E) and in open work, so those are exempt.
+  if (plan.answerFormat !== "expression" && plan.answerFormat !== "open" && /^[A-E]$/.test(a))
+    return false;
+  // AIME is the one format unambiguous enough to hard-enforce: integer 0–999.
+  if (plan.competition === "AIME") return /^\d{1,3}$/.test(a) && Number(a) <= 999;
+  if (plan.answerFormat === "integer") return /^-?\d+$/.test(a);
+  // numeric / expression / short-text: a real non-placeholder answer is enough —
+  // enforcing shape beyond this is the prompt's job, not the guard's.
   return true;
 }
 
@@ -171,26 +171,40 @@ function contentWords(text: string): string[] {
     );
 }
 
-// Reject a variant that's too recognizable as its seed, so the student can
-// still do the real AIME problem later. Only applied on the variant (hard) path.
-// Checks each variant against every seed (we don't know which seed produced which
-// variant) and rejects on either axis vs. any seed. Returns a short diagnostic
-// (which seed + which axis + the value) when too similar, else null — logging the
-// axis distinguishes a true echo (reused numbers) from over-strict lexical drops.
-export function tooSimilarToSeed(p: Problem, seeds: Anchor[]): string | null {
+// Reject a problem that's too recognizable as one of `others`. Two uses:
+//   - variant path: `others` are the corpus seeds, so the student can still do the
+//     real AIME problem later (logged, not dropped);
+//   - every path: `others` are the problems already kept, so a set can't ship two
+//     dressings of the same question. This is the near-duplicate check the old
+//     corpus-free engine lacked entirely — it deduped on exact string equality, so
+//     four parallel chunks working from one prompt happily returned paraphrases.
+//
+// Set `numeric: false` for non-mathematical content: two Spanish exercises sharing
+// the integers 12 and 30 tell you nothing, and the axis only produces false drops.
+// Returns a short diagnostic (which item + which axis + the value) when too
+// similar, else null — logging the axis distinguishes a true echo from an
+// over-strict lexical drop.
+export function tooSimilarToSeed(
+  p: Problem,
+  others: Anchor[],
+  opts: { numeric?: boolean } = {}
+): string | null {
+  const { numeric = true } = opts;
   const variantNums = extractNumbers(p.problem);
   const variantWords = contentWords(p.problem);
 
-  for (const seed of seeds) {
-    const seedNums = extractNumbers(seed.statement);
+  for (const seed of others) {
     const seedWords = contentWords(seed.statement);
     const label = `${seed.source}${seed.number != null ? `#${seed.number}` : ""}`;
 
     // Numeric overlap axis
-    const sharedNums = variantNums.filter((n) => seedNums.includes(n)).length;
-    if (sharedNums >= SEED_NUMERIC_OVERLAP_THRESHOLD) return `${label} shared-numbers=${sharedNums}`;
-    const numJaccard = jaccardSets(variantNums, seedNums);
-    if (numJaccard > SEED_NUMERIC_JACCARD_THRESHOLD) return `${label} numeric-jaccard=${numJaccard.toFixed(2)}`;
+    if (numeric) {
+      const seedNums = extractNumbers(seed.statement);
+      const sharedNums = variantNums.filter((n) => seedNums.includes(n)).length;
+      if (sharedNums >= SEED_NUMERIC_OVERLAP_THRESHOLD) return `${label} shared-numbers=${sharedNums}`;
+      const numJaccard = jaccardSets(variantNums, seedNums);
+      if (numJaccard > SEED_NUMERIC_JACCARD_THRESHOLD) return `${label} numeric-jaccard=${numJaccard.toFixed(2)}`;
+    }
 
     // Lexical overlap axis
     const lexJaccard = jaccardSets(variantWords, seedWords);

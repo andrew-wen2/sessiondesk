@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/session";
 import {
   generateMeetLink,
-  propagateMeetLink,
+  resyncStudentEvents,
   MeetStillGeneratingError,
   SESSION_FOR_GCAL_SELECT,
 } from "@/lib/gcal";
@@ -67,7 +67,7 @@ export async function POST(
           where: { studentId: id, userId, googleEventId: { not: null } },
           select: SESSION_FOR_GCAL_SELECT,
         });
-        const remaps = await propagateMeetLink(account, rows, meetLink);
+        const remaps = await resyncStudentEvents(account, rows, { attachConference: true });
         for (const r of remaps) {
           await prisma.session.update({
             where: { id: r.id },

@@ -2,15 +2,20 @@
 // worked examples, practice) for one session. Works for any subject; the corpus
 // pipeline is not involved (a lesson is generative teaching content, not calibrated
 // contest problems). One tool-forced call via the shared emit_lesson tool.
+//
+// It does share the problem pipeline's PLAN, so a lesson is calibrated by the same
+// inferred domain and difficulty rubric the problems are — previously this path was
+// entirely subject-blind and got nothing but the raw level text.
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { Lesson } from "@/lib/types";
+import type { GenerationPlan } from "@/lib/generation/plan";
 
 export type LessonInput = {
-  subject: string;
-  level: string;
+  profile: string; // the student's free-text profile (subject + level + goals)
   topic: string;
   recentTopics: string[];
+  plan: GenerationPlan;
 };
 
 const LESSON_TOOL: Anthropic.Tool = {
@@ -80,17 +85,20 @@ Calibrate difficulty to the stated level exactly. Write mathematics in LaTeX ($.
 Return the lesson by calling the emit_lesson tool. Write nothing outside the tool call.`;
 
 function buildLessonPrompt(input: LessonInput): { system: string; user: string } {
-  const { subject, level, topic, recentTopics } = input;
+  const { profile, topic, recentTopics, plan } = input;
+  // The rubric goes in the SYSTEM block: it's stable for this student + topic, so it
+  // stays cacheable, and it's the same difficulty standard the problem set is held to.
+  const system = plan.rubric ? `${LESSON_SYSTEM}\n\nDifficulty calibration for this student:\n${plan.rubric}` : LESSON_SYSTEM;
   const lines: string[] = [];
-  lines.push(`Subject: ${subject || "(infer from the level description)"}`);
-  lines.push(`Student level / goals: ${level || "(unspecified)"}`);
+  if (plan.domain) lines.push(`Subject: ${plan.domain}`);
+  lines.push(`Student profile: ${profile || "(unspecified)"}`);
   lines.push(`Lesson topic: ${topic.trim() || "(choose an appropriate next topic for this level)"}`);
   if (recentTopics.length > 0) {
     lines.push(`Recently covered (build on these, don't repeat): ${recentTopics.join("; ")}`);
   }
   lines.push("");
   lines.push("Write the lesson and return it via emit_lesson.");
-  return { system: LESSON_SYSTEM, user: lines.join("\n") };
+  return { system, user: lines.join("\n") };
 }
 
 function isNonEmptyStringArray(v: unknown): v is string[] {
@@ -140,10 +148,14 @@ export async function generateLesson(opts: {
   recordUsage: (u: Anthropic.Usage) => void;
 }): Promise<LessonResult> {
   const { client, input, recordUsage } = opts;
-  // Lessons favor quality; default to the mid (Sonnet) model, env-overridable.
+  // Lessons favor quality regardless of tier — a teaching artifact for a beginner is
+  // not a cheaper job than one for an advanced student — so this stays on the mid
+  // (Sonnet) model rather than following plan.tier down to Haiku. Env-overridable.
   const model = process.env.GENERATION_MODEL ?? process.env.GENERATION_MODEL_MID ?? "claude-sonnet-4-6";
   const { system, user } = buildLessonPrompt(input);
-  console.log(`[/api/generate-lesson] subject="${input.subject}" model=${model}`);
+  console.log(
+    `[/api/generate-lesson] plan=${input.plan.source} domain="${input.plan.domain}" tier=${input.plan.tier} model=${model}`
+  );
 
   try {
     // Thinking off + forced tool + non-streaming: a single structured lesson is

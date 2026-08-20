@@ -15,16 +15,25 @@ export async function POST(
     const userId = await getCurrentUserId();
     if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
-    // Select only the fields needed to create the GCal event — skip problems/homework/etc.
-    // meetLink is now on the student, not the session.
+    // Select only the fields needed to create the GCal event, plus `status` for the
+    // cancelled guard below. meetLink is on the student, not the session.
     const session = await prisma.session.findFirst({
       where: { id, userId },
-      select: SESSION_FOR_GCAL_SELECT,
+      select: { ...SESSION_FOR_GCAL_SELECT, status: true },
     });
     if (!session) return NextResponse.json({ error: "Session not found." }, { status: 404 });
 
     if (session.googleEventId) {
-      return NextResponse.json({ status: "already synced" });
+      return NextResponse.json({ status: "already synced", googleEventId: session.googleEventId });
+    }
+    // A cancelled session is *supposed* to have no event — a null googleEventId is
+    // the correct state here, not a failed sync. Without this guard the retry path
+    // would recreate the event cancelling just deleted.
+    if (session.status === "cancelled") {
+      return NextResponse.json(
+        { error: "Cancelled sessions aren't mirrored to Calendar." },
+        { status: 400 }
+      );
     }
     const account = await getGcalAccount(userId);
     if (!account) {

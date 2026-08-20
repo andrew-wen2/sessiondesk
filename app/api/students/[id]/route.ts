@@ -2,10 +2,13 @@ import { NextResponse, after } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/session";
-import { deleteEvent, propagateMeetLink, SESSION_FOR_GCAL_SELECT } from "@/lib/gcal";
+import { deleteEvent, resyncStudentEvents, SESSION_FOR_GCAL_SELECT } from "@/lib/gcal";
 import { getGcalAccount } from "@/lib/gcal-account";
 import { parseNonNegInt, parseMeetLink } from "@/lib/validation";
-import { getProfile } from "@/lib/subjects";
+
+// A rename, a profile edit, or a delete each fan out over every one of this student's
+// sessions, one sequential Calendar call apiece — billed to this invocation's budget.
+export const maxDuration = 60;
 
 // GET /api/students/[id] — single student (must belong to the current user).
 export async function GET(
@@ -26,8 +29,8 @@ export async function GET(
   }
 }
 
-// PATCH /api/students/[id] — name, subject, generatorProfile, level, rate, notes,
-// meetLink are editable. id is not patchable here.
+// PATCH /api/students/[id] — name, profile, rate, notes, meetLink are editable.
+// id is not patchable here.
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -51,11 +54,9 @@ export async function PATCH(
       }
       data.name = name;
     }
-    if (typeof body.level === "string") data.level = body.level;
-    if (typeof body.subject === "string") data.subject = body.subject.trim();
-    // Normalize through getProfile so only a known key is ever stored.
-    if (typeof body.generatorProfile === "string") data.generatorProfile = getProfile(body.generatorProfile).key;
+    if (typeof body.profile === "string") data.profile = body.profile;
     if (typeof body.notes === "string") data.notes = body.notes;
+    if (typeof body.archived === "boolean") data.archived = body.archived;
     if (body.rate !== undefined) {
       const rate = parseNonNegInt(body.rate);
       if (!rate.ok) {
@@ -94,18 +95,24 @@ export async function PATCH(
 
     const student = await prisma.student.update({ where: { id }, data });
 
-    // Propagate the new meetLink to all of this student's synced GCal events
-    // after the response flushes — non-blocking.
-    const account = meetLinkInBody ? await getGcalAccount(userId) : null;
+    // Mirror the edit onto this student's synced GCal events. The event title IS the
+    // student name and the description carries profile + Meet link (see eventBody in
+    // lib/gcal.ts), so all three have to propagate or a rename leaves every mirrored
+    // event showing the old name until something else happens to touch it. `rate` is
+    // absent on purpose — it appears nowhere in the event.
+    const mirrored = data.name !== undefined || data.profile !== undefined || meetLinkInBody;
+    const account = mirrored ? await getGcalAccount(userId) : null;
     if (account) {
-      const meetLink = student.meetLink;
       after(async () => {
         try {
+          // Loaded after the update, so the rows already carry the new values.
           const rows = await prisma.session.findMany({
             where: { studentId: id, userId, googleEventId: { not: null } },
             select: SESSION_FOR_GCAL_SELECT,
           });
-          const remaps = await propagateMeetLink(account, rows, meetLink);
+          const remaps = await resyncStudentEvents(account, rows, {
+            attachConference: meetLinkInBody,
+          });
           for (const r of remaps) {
             await prisma.session.update({
               where: { id: r.id },
@@ -113,7 +120,7 @@ export async function PATCH(
             });
           }
         } catch (e) {
-          console.error("[/api/students/[id] PATCH] propagate failed (non-blocking):", e);
+          console.error("[/api/students/[id] PATCH] resync failed (non-blocking):", e);
         }
       });
     }

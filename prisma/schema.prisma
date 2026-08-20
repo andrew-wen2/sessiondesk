@@ -36,12 +36,21 @@ model Student {
   userId         String
   name           String
   parentContact  String?
-  subject        String @default("") // human-facing subject label (e.g. "Spanish", "AP Physics", "Competition Math"); shown in UI + injected into generation prompts
-  generatorProfile String @default("general") // selects the generation engine: "general" (corpus-free, any subject) | "competition-math" (AMC/AIME/F=ma corpus pipeline). Unknown values fall back to "general".
-  level          String // free-text calibration/goals string fed to the generator; for competition-math the competition + difficulty band are inferred from it; keep specific
+  // Subject, level, and goals as one free-text description ("AIME, problems 10–15";
+  // "AP Biology, unit 3 genetics — shaky on meiosis"). The SOLE calibration input:
+  // the generation plan infers domain, difficulty, and answer format from this plus
+  // the session topic. There is no stored subject or engine selector — keep it specific.
+  profile        String @default("")
   rate           Int // default dollars per session
   notes          String?
   meetLink       String?  // one Google Meet URL, mirrored to all of this student's GCal events
+  // Moves this student into the "Past students" section of the roster
+  // (app/students/page.tsx) instead of the main list, once they're no longer being
+  // taught. Reversible, no cascade — sessions, payments, and the Add-session combobox
+  // are all untouched by this flag; it only changes which roster section they render
+  // in. Nothing is ever hidden by it — an archived student who still owes money shows
+  // up in Past students the same as anyone else, just segregated, never suppressed.
+  archived       Boolean  @default(false)
   sessions       Session[]
   createdAt      DateTime  @default(now())
 
@@ -77,15 +86,27 @@ model Session {
   start         DateTime
   durationMin   Int      @default(60)
   topic         String   @default("")
-  homework      String   @default("")
   problems      Json?
   lesson        Json?    // generated lesson blob (title/objectives/sections/workedExamples/practice); parallel to `problems`
   amount        Int
   paid          Boolean  @default(false)
+  // Lifecycle: "scheduled" | "completed" | "cancelled" | "no_show". String (not a
+  // Prisma enum) so an unexpected value normalizes on read instead of throwing.
+  // Validated on write and backed by a CHECK constraint; helpers live in
+  // lib/session-status.ts.
+  status        String   @default("scheduled")
+  // Groups the rows materialized from one recurrence rule; null = standalone session.
+  // Deliberately a bare key, not a Series model: there is no series-level state worth
+  // storing, and a table would add a join for a nullable grouping key.
+  seriesId      String?
   googleEventId String?  @unique
   createdAt     DateTime @default(now())
 
   @@index([userId])
   @@index([studentId])
   @@index([start])
+  @@index([seriesId])
+  // Every session query is userId + a start range (calendar, dashboard, ledger);
+  // the single-column start index can't serve the userId predicate.
+  @@index([userId, start])
 }

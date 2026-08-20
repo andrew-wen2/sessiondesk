@@ -10,10 +10,65 @@ import LessonView from "./LessonView";
 import type { Lesson } from "@/lib/types";
 import { downloadProblemsPdf, downloadLessonPdf } from "@/lib/download-problems";
 import { downloadProblemsDocx, downloadLessonDocx } from "@/lib/download-docx";
-import { uiLabels } from "@/lib/subjects";
 import { startGeneration, useGeneration, startLessonGeneration, useLessonGeneration } from "@/lib/generation-store";
+import {
+  SESSION_STATUSES,
+  STATUS_LABEL,
+  effectiveStatus,
+  type SessionStatus,
+} from "@/lib/session-status";
+import { Card, CardBody, CardHeader } from "./ui/Card";
+import { Field, Input, Select, Textarea } from "./ui/Field";
+import Button from "./ui/Button";
+import Badge from "./ui/Badge";
+import { AlertCircle, Check, ChevronLeft, Download, LinkIcon, Sparkles, Trash } from "./icons";
 
 const DURATIONS = [30, 45, 60, 90, 120];
+
+// The this-vs-future choice shown on a session that belongs to a recurring series.
+// A radio pair rather than two buttons: it's a mode you set before acting, and it
+// has to be readable at a glance before you press an irreversible Delete.
+function ScopeChoice({
+  name,
+  value,
+  onChange,
+  thisLabel,
+  futureLabel,
+  hint,
+}: {
+  name: string;
+  value: "this" | "future";
+  onChange: (v: "this" | "future") => void;
+  thisLabel: string;
+  futureLabel: string;
+  hint?: string;
+}) {
+  return (
+    <div className="space-y-1.5 text-sm">
+      {(["this", "future"] as const).map((v) => (
+        <label
+          key={v}
+          className={`flex cursor-pointer items-center gap-2 rounded-control border px-3 py-2 transition-colors duration-150 ${
+            value === v
+              ? "border-primary/40 bg-primary-soft text-primary"
+              : "border-hairline text-ink-soft hover:bg-sunken"
+          }`}
+        >
+          <input
+            type="radio"
+            name={name}
+            value={v}
+            checked={value === v}
+            onChange={() => onChange(v)}
+            className="accent-[rgb(var(--primary))]"
+          />
+          {v === "this" ? thisLabel : futureLabel}
+        </label>
+      ))}
+      {hint && <p className="text-xs text-muted">{hint}</p>}
+    </div>
+  );
+}
 
 export type SessionDetailData = {
   id: string;
@@ -22,6 +77,9 @@ export type SessionDetailData = {
   topic: string;
   paid: boolean;
   amount: number;
+  status: SessionStatus;
+  seriesId: string | null;
+  laterInSeries: number; // sessions after this one in the same series; 0 when standalone
   problems: Problem[] | null;
   lesson: Lesson | null;
   googleEventId: string | null;
@@ -29,29 +87,38 @@ export type SessionDetailData = {
   student: {
     id: string;
     name: string;
-    level: string;
-    generatorProfile: string;
   };
 };
 
 export default function SessionDetail({
   session,
+  backHref = "/",
   gcalConfigured = false,
 }: {
   session: SessionDetailData;
+  // Where "Back to calendar" returns to — the exact view/date the tutor came from
+  // when they arrived via the calendar's preview popover, so exiting a session
+  // doesn't bounce them back to today's month/week. Defaults to a bare `/` for
+  // every other entry point (dashboard, student payments), which have no "previous
+  // calendar state" to return to anyway.
+  backHref?: string;
   gcalConfigured?: boolean;
 }) {
   const { id } = session;
   const router = useRouter();
 
-  // Practice vocabulary is profile-aware: math keeps "Problem"/mono answers, every
-  // other subject gets neutral "Exercise"/prose. Single source of truth in lib/subjects.
-  const labels = uiLabels(session.student.generatorProfile);
-
   // Canonical schedule state (header reflects it after a save).
   const [startIso, setStartIso] = useState(session.start);
   const [durationMin, setDurationMin] = useState(session.durationMin);
   const [amount, setAmount] = useState(session.amount);
+
+  // Series scope. Only meaningful when this session has later siblings; the controls
+  // are hidden otherwise so a standalone session looks exactly as it did before.
+  // Schedule edits and deletes each carry their own scope — changing one shouldn't
+  // silently arm the other.
+  const inSeries = session.seriesId !== null && session.laterInSeries > 0;
+  const [scheduleScope, setScheduleScope] = useState<"this" | "future">("this");
+  const [deleteScope, setDeleteScope] = useState<"this" | "future">("this");
 
   // Schedule edit form.
   const [editing, setEditing] = useState(false);
@@ -71,6 +138,11 @@ export default function SessionDetail({
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
 
+  // Re-derive from the prop on every router.refresh(): a useState initializer
+  // doesn't re-run when this instance is reused with a new session, which is
+  // exactly what left the "Not synced" badge stuck after un-cancelling.
+  useEffect(() => setEventId(session.googleEventId), [session.googleEventId]);
+
   // Meet link — sourced from the student; read-only display on this page.
   // Generate/edit/remove lives on the student profile.
   const meetLink = session.meetLink;
@@ -80,6 +152,17 @@ export default function SessionDetail({
 
   const [paid, setPaid] = useState(session.paid);
   const [paidError, setPaidError] = useState<string | null>(null);
+
+  const [status, setStatus] = useState<SessionStatus>(session.status);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusSaving, setStatusSaving] = useState(false);
+
+  // "Now" is read after mount, never during render: this component server-renders
+  // and then hydrates, so a clock read during render would mismatch for a session
+  // that started in between. Until the effect runs, derivedStatus === status.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => setNow(Date.now()), []);
+  const derivedStatus = now === null ? status : effectiveStatus(status, startIso, now);
 
   const [problems, setProblems] = useState<Problem[]>(session.problems ?? []);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -108,8 +191,8 @@ export default function SessionDetail({
 
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
-  async function patch(body: Record<string, unknown>) {
-    const res = await fetch(`/api/sessions/${id}`, {
+  async function patch(body: Record<string, unknown>, scope: "this" | "future" = "this") {
+    const res = await fetch(`/api/sessions/${id}?scope=${scope}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -151,6 +234,28 @@ export default function SessionDetail({
     }
   }
 
+  // Status changes carry a Calendar side effect at the cancelled boundary: the route
+  // deletes the mirrored event when cancelling and recreates it when un-cancelling.
+  // Mirror that here so the "Not synced" affordance doesn't lie — and refresh on
+  // un-cancel, since the new event id is assigned after the response flushes.
+  async function changeStatus(next: SessionStatus) {
+    const prev = status;
+    if (next === prev) return;
+    setStatus(next); // optimistic
+    setStatusError(null);
+    setStatusSaving(true);
+    try {
+      await patch({ status: next });
+      if (next === "cancelled") setEventId(null);
+      else if (prev === "cancelled") router.refresh();
+    } catch {
+      setStatus(prev); // revert
+      setStatusError("Could not update status — try again.");
+    } finally {
+      setStatusSaving(false);
+    }
+  }
+
   async function retrySync() {
     setSyncing(true);
     setSyncError(null);
@@ -178,23 +283,22 @@ export default function SessionDetail({
 
   // Downloadable lesson files. PDF opens a print window (needs pop-ups); .docx builds
   // a Blob and saves directly. Each file is a student worksheet followed by a separate
-  // tutor answer key. Vocabulary/answer styling follow the subject profile.
+  // tutor answer key. Monospace-vs-prose answer styling is detected per item there.
   const POPUP_ERR = "Couldn't open the print window — allow pop-ups and retry.";
   const DOCX_ERR = "Couldn't build the Word file — try again.";
   const fileOpts = () => ({
     startIso,
     studentName: session.student.name,
     topic,
-    isMath: labels.isMath,
   });
 
   function problemsPdf() {
     setDownloadError(null);
-    if (!downloadProblemsPdf(problems, { ...fileOpts(), item: labels.item })) setDownloadError(POPUP_ERR);
+    if (!downloadProblemsPdf(problems, fileOpts())) setDownloadError(POPUP_ERR);
   }
   async function problemsDocx() {
     setDownloadError(null);
-    if (!(await downloadProblemsDocx(problems, { ...fileOpts(), item: labels.item }))) setDownloadError(DOCX_ERR);
+    if (!(await downloadProblemsDocx(problems, fileOpts()))) setDownloadError(DOCX_ERR);
   }
   function lessonPdf() {
     if (!lesson) return;
@@ -231,15 +335,21 @@ export default function SessionDetail({
     }
     setSavingSchedule(true);
     try {
-      const updated = await patch({
-        start: start.toISOString(),
-        durationMin: draftDuration,
-        amount: amt,
-      });
+      const updated = await patch(
+        {
+          start: start.toISOString(),
+          durationMin: draftDuration,
+          amount: amt,
+        },
+        scheduleScope
+      );
       setStartIso(updated.start);
       setDurationMin(updated.durationMin);
       setAmount(updated.amount);
       setEditing(false);
+      // The later occurrences moved on the server; re-read so the calendar and any
+      // series count on this page reflect it.
+      if (scheduleScope === "future") router.refresh();
     } catch (e) {
       setScheduleError(e instanceof Error ? e.message : "Save failed — try again.");
     } finally {
@@ -251,12 +361,12 @@ export default function SessionDetail({
     setDeleteError(null);
     setDeleting(true);
     try {
-      const res = await fetch(`/api/sessions/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/sessions/${id}?scope=${deleteScope}`, { method: "DELETE" });
       if (!res.ok) {
         const { error } = await res.json().catch(() => ({ error: "" }));
         throw new Error(error || "Delete failed.");
       }
-      router.push("/");
+      router.push(backHref);
       router.refresh();
     } catch (e) {
       setDeleteError(e instanceof Error ? e.message : "Delete failed — try again.");
@@ -270,255 +380,388 @@ export default function SessionDetail({
 
   return (
     <div className="space-y-6">
-      <Link href="/" className="text-sm text-blue-600 hover:underline">
-        ← Back to calendar
+      <Link
+        href={backHref}
+        className="inline-flex items-center gap-1 text-sm text-muted transition-colors duration-150 hover:text-ink"
+      >
+        <ChevronLeft className="h-3.5 w-3.5" />
+        Back to calendar
       </Link>
 
       {/* Header */}
-      <div className="space-y-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-xl font-bold">{session.student.name}</h1>
-        </div>
-        <p className="flex items-center gap-2 text-sm text-gray-600">
-          <span>
-            {datePart} · {timePart} · {durationMin} min
-          </span>
-          {!editing && (
-            <button onClick={openEdit} className="text-xs text-blue-600 hover:underline">
-              Edit
-            </button>
-          )}
-        </p>
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-sm">${amount}</span>
-          <button
-            onClick={togglePaid}
-            className={
-              paid
-                ? "rounded border border-transparent bg-green-100 px-2 py-1 text-sm font-medium text-green-700 hover:bg-green-200"
-                : "rounded border border-orange-300 px-2 py-1 text-sm font-medium text-orange-600 hover:bg-orange-50"
-            }
+      <Card className="space-y-3 px-5 py-4">
+        <div className="flex flex-wrap items-start gap-3">
+          <span
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-soft text-sm font-semibold text-primary"
+            aria-hidden
           >
-            {paid ? "✓ Paid" : "Mark paid"}
-          </button>
-          {paidError && <span className="text-xs text-red-600">{paidError}</span>}
+            {session.student.name.trim().charAt(0).toUpperCase() || "?"}
+          </span>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xl font-semibold tracking-tight text-ink">
+              {session.student.name}
+            </h1>
+            <p className="flex flex-wrap items-center gap-2 text-sm text-muted">
+              <span className="font-mono">
+                {datePart} · {timePart} · {durationMin} min
+              </span>
+              {!editing && (
+                <button
+                  onClick={openEdit}
+                  className="cursor-pointer text-xs font-medium text-primary underline-offset-2 transition-colors duration-150 hover:underline"
+                >
+                  Edit
+                </button>
+              )}
+            </p>
+            {inSeries && (
+              <p className="mt-1 text-xs text-muted">
+                Repeats — {session.laterInSeries} later session
+                {session.laterInSeries === 1 ? "" : "s"} in this series.
+              </p>
+            )}
+          </div>
+          <span className="font-mono text-lg font-semibold text-ink">${amount}</span>
         </div>
 
+        <div className="flex flex-wrap items-center gap-3 border-t border-hairline pt-3">
+          {/* A cancelled session isn't owed, so offering "Mark paid" on one would be
+              nonsense. Every other status keeps it — a no-show is still billable. */}
+          {status !== "cancelled" && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={togglePaid}
+              className={
+                paid
+                  ? "border-good/30 bg-good-soft text-good hover:bg-good/15"
+                  : "border-warn/40 text-warn hover:bg-warn-soft"
+              }
+            >
+              {paid ? <Check className="h-3.5 w-3.5" /> : null}
+              {paid ? "Paid" : "Mark paid"}
+            </Button>
+          )}
+          {paidError && <span className="text-xs text-danger">{paidError}</span>}
+
+          <label className="flex items-center gap-2 text-xs text-muted">
+            Status
+            <Select
+              value={status}
+              onChange={(e) => changeStatus(e.target.value as SessionStatus)}
+              disabled={statusSaving}
+              size="sm"
+              className="w-auto"
+            >
+              {SESSION_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {STATUS_LABEL[s]}
+                </option>
+              ))}
+            </Select>
+          </label>
+          {/* A past session nobody touched already reads as completed everywhere else;
+              say so here rather than nagging the tutor to mark each one. */}
+          {status === "scheduled" && derivedStatus === "completed" && (
+            <span className="text-xs text-muted">Counts as completed — it&apos;s in the past.</span>
+          )}
+          {statusError && <span className="text-xs text-danger">{statusError}</span>}
+        </div>
+
+        {status === "cancelled" && (
+          <p className="rounded-control bg-sunken px-3 py-2 text-xs text-muted">
+            Cancelled — not counted as owed, and removed from Google Calendar.
+          </p>
+        )}
+
         {editing && (
-          <div className="mt-2 space-y-3 rounded-lg border border-gray-200 bg-white p-3">
-            <div className="flex flex-wrap items-end gap-3">
-              <label className="text-xs text-gray-600">
-                Date
-                <input
+          <div className="space-y-3 rounded-control border border-hairline bg-sunken/50 p-3">
+            <div className="flex flex-wrap gap-3">
+              <Field label="Date" htmlFor="edit-date" className="w-[9.5rem]">
+                <Input
+                  id="edit-date"
                   type="date"
                   value={draftDate}
                   onChange={(e) => setDraftDate(e.target.value)}
-                  className="mt-1 block rounded border border-gray-300 px-2 py-1 text-sm"
+                  className="font-mono"
                 />
-              </label>
-              <label className="text-xs text-gray-600">
-                Time
-                <input
+              </Field>
+              <Field label="Time" htmlFor="edit-time" className="w-[9.5rem]">
+                <Input
+                  id="edit-time"
                   type="time"
                   value={draftTime}
                   onChange={(e) => setDraftTime(e.target.value)}
-                  className="mt-1 block rounded border border-gray-300 px-2 py-1 text-sm"
+                  className="font-mono"
                 />
-              </label>
-              <label className="text-xs text-gray-600">
-                Duration
-                <select
+              </Field>
+              <Field label="Duration" htmlFor="edit-duration" className="w-[7.5rem]">
+                <Select
+                  id="edit-duration"
                   value={draftDuration}
                   onChange={(e) => setDraftDuration(Number(e.target.value))}
-                  className="mt-1 block rounded border border-gray-300 px-2 py-1 text-sm"
                 >
                   {DURATIONS.map((m) => (
                     <option key={m} value={m}>
                       {m} min
                     </option>
                   ))}
-                </select>
-              </label>
-              <label className="text-xs text-gray-600">
-                Rate
-                <input
+                </Select>
+              </Field>
+              <Field label="Rate" htmlFor="edit-rate" className="w-[6.5rem]">
+                <Input
+                  id="edit-rate"
                   type="number"
                   min={0}
                   value={draftAmount}
                   onChange={(e) => setDraftAmount(e.target.value)}
-                  className="mt-1 block w-24 rounded border border-gray-300 px-2 py-1 text-sm font-mono"
+                  className="font-mono"
                 />
-              </label>
+              </Field>
             </div>
+            {inSeries && (
+              <ScopeChoice
+                name="schedule-scope"
+                value={scheduleScope}
+                onChange={setScheduleScope}
+                thisLabel="This session only"
+                futureLabel={`This and the ${session.laterInSeries} later session${
+                  session.laterInSeries === 1 ? "" : "s"
+                }`}
+                hint="Date, time, duration and rate carry across. The topic never does."
+              />
+            )}
             <div className="flex items-center gap-2">
-              <button
-                onClick={saveSchedule}
-                disabled={savingSchedule}
-                className="rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
-              >
+              <Button size="sm" onClick={saveSchedule} loading={savingSchedule}>
                 {savingSchedule ? "Saving…" : "Save changes"}
-              </button>
-              <button
-                onClick={() => setEditing(false)}
-                className="rounded px-3 py-1 text-sm text-gray-600 hover:bg-gray-100"
-              >
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
                 Cancel
-              </button>
-              {scheduleError && <span className="text-xs text-red-600">{scheduleError}</span>}
+              </Button>
+              {scheduleError && <span className="text-xs text-danger">{scheduleError}</span>}
             </div>
           </div>
         )}
-        {gcalConfigured && !eventId && (
-          <div className="flex items-center gap-2 text-xs text-orange-600">
-            <span>Not synced to Calendar</span>
+        {/* A cancelled session is *meant* to have no event, so a null id is the
+            correct state here — not a sync failure worth flagging. */}
+        {gcalConfigured && !eventId && status !== "cancelled" && (
+          <div className="flex items-center gap-2 text-xs">
+            <Badge tone="warn">
+              <AlertCircle className="h-3 w-3" />
+              Not synced to Calendar
+            </Badge>
             <button
               onClick={retrySync}
               disabled={syncing}
-              className="text-blue-600 hover:underline disabled:opacity-60"
+              className="cursor-pointer font-medium text-primary underline-offset-2 transition-colors duration-150 hover:underline disabled:opacity-60"
             >
               {syncing ? "Syncing…" : "Retry sync"}
             </button>
-            {syncError && <span className="text-red-600">{syncError}</span>}
+            {syncError && <span className="text-danger">{syncError}</span>}
           </div>
         )}
-      </div>
+      </Card>
 
       {/* Meet link — read-only; source of truth is the student profile */}
-      <section>
-        <h2 className="text-sm font-semibold text-gray-500">Meet link</h2>
-        <div className="mt-1 space-y-1">
+      <Card>
+        <CardHeader title="Meet link" />
+        <CardBody className="space-y-1.5">
           {meetLink ? (
             <a
               href={meetLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-sm text-blue-600 hover:underline break-all"
+              className="inline-flex items-center gap-1.5 break-all text-sm text-primary transition-colors duration-150 hover:text-primary-hover"
             >
+              <LinkIcon className="h-3.5 w-3.5 shrink-0" />
               {meetLink}
             </a>
           ) : (
-            <p className="text-xs text-gray-400">No Meet link yet.</p>
+            <p className="text-sm text-muted">No Meet link yet.</p>
           )}
-          <p className="text-xs text-gray-400">
-            <Link href={`/students/${session.student.id}`} className="text-blue-600 hover:underline">
+          <p className="text-xs text-muted">
+            <Link
+              href={`/students/${session.student.id}`}
+              className="text-primary underline-offset-2 transition-colors duration-150 hover:underline"
+            >
               Generate, edit, or remove this link on the student&apos;s profile.
             </Link>
           </p>
-        </div>
-      </section>
+        </CardBody>
+      </Card>
 
       {/* Topic */}
-      <section>
-        <h2 className="text-sm font-semibold text-gray-500">
-          What we&apos;re covering
-          <SaveIndicator status={topicStatus} onRetry={() => scheduleSave("topic", topic, setTopicStatus)} className="ml-2 text-xs" />
-        </h2>
-        <textarea
-          value={topic}
-          onChange={(e) => {
-            setTopic(e.target.value);
-            scheduleSave("topic", e.target.value, setTopicStatus);
-          }}
-          rows={2}
-          placeholder="What this session covers"
-          className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+      <Card>
+        <CardHeader
+          title="What we're covering"
+          action={
+            <SaveIndicator
+              status={topicStatus}
+              onRetry={() => scheduleSave("topic", topic, setTopicStatus)}
+              className="text-xs"
+            />
+          }
         />
-      </section>
+        <CardBody>
+          <Textarea
+            value={topic}
+            onChange={(e) => {
+              setTopic(e.target.value);
+              scheduleSave("topic", e.target.value, setTopicStatus);
+            }}
+            rows={2}
+            placeholder="What this session covers"
+          />
+        </CardBody>
+      </Card>
 
       {/* Lesson */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-gray-500">Lesson</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={generateLessonNow}
-            disabled={generatingLesson}
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
-          >
-            {generatingLesson ? "Generating…" : lesson ? "Regenerate lesson" : "Generate lesson"}
-          </button>
-          {lesson && (
-            <span className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-sm">
-              <span className="text-xs uppercase tracking-wide text-gray-400">Download</span>
-              <button onClick={lessonPdf} className="font-medium text-blue-600 hover:underline">
-                PDF
-              </button>
-              <span className="text-gray-300" aria-hidden>
-                ·
-              </span>
-              <button onClick={lessonDocx} className="font-medium text-blue-600 hover:underline">
-                Word
-              </button>
-            </span>
+      <Card>
+        <CardHeader
+          title="Lesson"
+          action={
+            <>
+              {lesson && <DownloadGroup onPdf={lessonPdf} onDocx={lessonDocx} />}
+              <Button size="sm" onClick={generateLessonNow} loading={generatingLesson}>
+                {!generatingLesson && <Sparkles className="h-3.5 w-3.5" />}
+                {generatingLesson ? "Generating…" : lesson ? "Regenerate" : "Generate lesson"}
+              </Button>
+            </>
+          }
+        />
+        <CardBody className="space-y-3">
+          {lessonError && <ErrorLine>{lessonError}</ErrorLine>}
+          {lessonDownloadError && <ErrorLine>{lessonDownloadError}</ErrorLine>}
+          {lesson ? (
+            <LessonView lesson={lesson} />
+          ) : (
+            !lessonError && (
+              <p className="text-sm text-muted">
+                No lesson yet — generate one calibrated to this student&apos;s profile.
+              </p>
+            )
           )}
-        </div>
-        {lessonError && <p className="text-sm text-red-600">{lessonError}</p>}
-        {lessonDownloadError && <p className="text-sm text-red-600">{lessonDownloadError}</p>}
-        {lesson && <LessonView lesson={lesson} isMath={labels.isMath} />}
-      </section>
+        </CardBody>
+      </Card>
 
       {/* Practice */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-gray-500">{labels.sectionTitle}</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={generate}
-            disabled={generating}
-            className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
-          >
-            {generating ? "Generating…" : labels.generate}
-          </button>
-          {problems.length > 0 && (
-            <span className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1 text-sm">
-              <span className="text-xs uppercase tracking-wide text-gray-400">Download</span>
-              <button onClick={problemsPdf} className="font-medium text-blue-600 hover:underline">
-                PDF
-              </button>
-              <span className="text-gray-300" aria-hidden>
-                ·
-              </span>
-              <button onClick={problemsDocx} className="font-medium text-blue-600 hover:underline">
-                Word
-              </button>
-            </span>
+      <Card>
+        <CardHeader
+          title="Practice problems"
+          action={
+            <>
+              {problems.length > 0 && <DownloadGroup onPdf={problemsPdf} onDocx={problemsDocx} />}
+              <Button size="sm" onClick={generate} loading={generating}>
+                {!generating && <Sparkles className="h-3.5 w-3.5" />}
+                {generating
+                  ? "Generating…"
+                  : problems.length > 0
+                    ? "Regenerate"
+                    : "Generate problems"}
+              </Button>
+            </>
+          }
+        />
+        <CardBody className="space-y-3">
+          {genError && <ErrorLine>{genError}</ErrorLine>}
+          {downloadError && <ErrorLine>{downloadError}</ErrorLine>}
+          {problems.length > 0 ? (
+            <ProblemSet problems={problems} />
+          ) : (
+            !genError && (
+              <p className="text-sm text-muted">
+                No problems yet — generate a set calibrated to this student&apos;s profile.
+              </p>
+            )
           )}
-        </div>
-        {genError && <p className="text-sm text-red-600">{genError}</p>}
-        {downloadError && <p className="text-sm text-red-600">{downloadError}</p>}
-        <ProblemSet problems={problems} item={labels.item} isMath={labels.isMath} />
-      </section>
+        </CardBody>
+      </Card>
 
       {/* Delete */}
-      <section className="border-t border-gray-100 pt-4">
+      <section className="border-t border-hairline pt-5">
         {!confirmingDelete ? (
-          <button
+          <Button
+            variant="danger"
+            size="sm"
             onClick={() => {
               setDeleteError(null);
               setConfirmingDelete(true);
             }}
-            className="text-sm text-red-600 hover:underline"
           >
+            <Trash className="h-3.5 w-3.5" />
             Delete session
-          </button>
+          </Button>
         ) : (
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-700">Delete this session? This can&apos;t be undone.</span>
-            <button
-              onClick={deleteSession}
-              disabled={deleting}
-              className="rounded bg-red-600 px-3 py-1 text-sm text-white hover:bg-red-700 disabled:opacity-60"
-            >
-              {deleting ? "Deleting…" : "Delete"}
-            </button>
-            <button
-              onClick={() => setConfirmingDelete(false)}
-              className="rounded px-3 py-1 text-sm text-gray-600 hover:bg-gray-100"
-            >
-              Cancel
-            </button>
+          <div className="space-y-3 rounded-control border border-danger/25 bg-danger-soft p-3">
+            {inSeries && (
+              <ScopeChoice
+                name="delete-scope"
+                value={deleteScope}
+                onChange={setDeleteScope}
+                thisLabel="Delete this session"
+                futureLabel={`Delete this and the ${session.laterInSeries} later session${
+                  session.laterInSeries === 1 ? "" : "s"
+                }`}
+              />
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm text-danger">
+                {deleteScope === "future"
+                  ? `Delete ${session.laterInSeries + 1} sessions? This can't be undone.`
+                  : "Delete this session? This can't be undone."}
+              </span>
+              <Button
+                variant="dangerSolid"
+                size="sm"
+                onClick={deleteSession}
+                loading={deleting}
+                className="ml-auto"
+              >
+                {deleting ? "Deleting…" : "Delete"}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setConfirmingDelete(false)}>
+                Cancel
+              </Button>
+            </div>
           </div>
         )}
-        {deleteError && <p className="mt-2 text-sm text-red-600">{deleteError}</p>}
+        {deleteError && <p className="mt-2 text-sm text-danger">{deleteError}</p>}
       </section>
     </div>
+  );
+}
+
+// Both generated artefacts offer the same two formats. One control, so PDF and Word
+// read as two halves of "download" rather than two more buttons competing with
+// Generate — which is the action that matters on this page.
+function DownloadGroup({ onPdf, onDocx }: { onPdf: () => void; onDocx: () => void }) {
+  return (
+    <span className="inline-flex h-8 items-center gap-1.5 rounded-control border border-hairline bg-sunken px-2.5 text-sm">
+      <Download className="h-3.5 w-3.5 text-muted" />
+      <button
+        onClick={onPdf}
+        className="cursor-pointer font-medium text-primary underline-offset-2 transition-colors duration-150 hover:underline"
+      >
+        PDF
+      </button>
+      <span className="text-hairline-strong" aria-hidden>
+        ·
+      </span>
+      <button
+        onClick={onDocx}
+        className="cursor-pointer font-medium text-primary underline-offset-2 transition-colors duration-150 hover:underline"
+      >
+        Word
+      </button>
+    </span>
+  );
+}
+
+function ErrorLine({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="flex items-start gap-2 rounded-control border border-danger/25 bg-danger-soft px-3 py-2 text-sm text-danger">
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+      <span>{children}</span>
+    </p>
   );
 }

@@ -1,21 +1,23 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { SaveIndicator, type SaveStatus } from "./SaveIndicator";
-import { getProfile, PROFILE_OPTIONS } from "@/lib/subjects";
+import { Card, CardBody, CardHeader } from "./ui/Card";
+import { Field, Input, Textarea } from "./ui/Field";
+import Button from "./ui/Button";
+import { LinkIcon } from "./icons";
 
 export type StudentDetailData = {
   id: string;
   name: string;
-  subject: string;
-  generatorProfile: string;
-  level: string;
+  profile: string;
   rate: number;
   notes: string;
   meetLink: string | null;
 };
 
-type Field = "subject" | "generatorProfile" | "level" | "rate" | "notes";
+type Field = "profile" | "rate" | "notes";
 
 export default function StudentDetail({
   student,
@@ -24,25 +26,16 @@ export default function StudentDetail({
   student: StudentDetailData;
   gcalConfigured: boolean;
 }) {
-  const [subject, setSubject] = useState(student.subject);
-  const [generatorProfile, setGeneratorProfile] = useState(student.generatorProfile);
-  // Advanced control — collapsed by default so it doesn't add to the form's weight;
-  // most tutors never change it (new students are all "General").
-  const [showSource, setShowSource] = useState(false);
-  const [level, setLevel] = useState(student.level);
+  const router = useRouter();
+  const [profile, setProfile] = useState(student.profile);
   const [rate, setRate] = useState(String(student.rate));
   const [notes, setNotes] = useState(student.notes);
   const [saved, setSaved] = useState({
-    subject: student.subject,
-    generatorProfile: student.generatorProfile,
-    level: student.level,
+    profile: student.profile,
     rate: String(student.rate),
     notes: student.notes,
   });
   const [status, setStatus] = useState<SaveStatus>("idle");
-
-  // The level field's helper text depends on the chosen generator.
-  const profile = getProfile(generatorProfile);
 
   // Meet link state — separate from the shared status so the indicator doesn't
   // flicker when other fields save.
@@ -52,6 +45,13 @@ export default function StudentDetail({
   const [meetGenerating, setMeetGenerating] = useState(false);
   const [meetError, setMeetError] = useState<string | null>(null);
 
+  // Every successful save calls router.refresh(). These edits go out through a plain
+  // fetch, which Next knows nothing about, so the client Router Cache keeps serving the
+  // payload it already has — and back/forward navigation is restored from that cache
+  // regardless of staleTime. Without the refresh, going back to /students (or to the
+  // calendar, whose chips carry the student name) replays pre-edit data until a hard
+  // reload. refresh() invalidates the cache and re-renders the current route; local
+  // draft state is untouched, since these useState initializers don't re-run.
   async function saveField(field: Field, value: string) {
     if (value === saved[field]) return;
     if (field === "rate") {
@@ -72,6 +72,7 @@ export default function StudentDetail({
       setSaved((s) => ({ ...s, [field]: value }));
       setStatus("saved");
       setTimeout(() => setStatus((s) => (s === "saved" ? "idle" : s)), 1500);
+      router.refresh();
     } catch {
       setStatus("error");
     }
@@ -100,6 +101,7 @@ export default function StudentDetail({
         throw new Error((data as { error?: string }).error || "Save failed.");
       }
       setMeetLink(trimmed);
+      router.refresh();
     } catch (e) {
       setMeetError(e instanceof Error ? e.message : "Save failed — try again.");
     } finally {
@@ -122,6 +124,7 @@ export default function StudentDetail({
       }
       setMeetLink(null);
       setMeetDraft("");
+      router.refresh();
     } catch (e) {
       setMeetError(e instanceof Error ? e.message : "Remove failed — try again.");
     } finally {
@@ -143,6 +146,7 @@ export default function StudentDetail({
       const link = (data as { meetLink?: unknown }).meetLink;
       setMeetLink(typeof link === "string" ? link : null);
       setMeetDraft("");
+      router.refresh();
     } catch (e) {
       setMeetError(e instanceof Error ? e.message : "Could not generate Meet link — try again.");
     } finally {
@@ -151,162 +155,117 @@ export default function StudentDetail({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 text-xs">
-        <SaveIndicator status={status} />
-      </div>
-
-      <div>
-        <label className="block text-sm font-semibold text-gray-500">Subject</label>
-        <p className="text-xs text-gray-400">What you tutor this student in, e.g. &ldquo;Spanish&rdquo;, &ldquo;AP Physics&rdquo;, &ldquo;Competition Math&rdquo;.</p>
-        <input
-          value={subject}
-          onChange={(e) => setSubject(e.target.value)}
-          onBlur={() => saveField("subject", subject)}
-          placeholder="Subject"
-          className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-        />
-      </div>
-
-      <div>
-        <div className="flex items-center gap-2">
-          <label className="text-sm font-semibold text-gray-500">Problem source</label>
-          {!showSource && (
-            <button
-              type="button"
-              onClick={() => setShowSource(true)}
-              className="text-xs text-blue-600 hover:underline"
-            >
-              Change
-            </button>
-          )}
-        </div>
-        {!showSource ? (
-          <p className="text-sm text-gray-700">{profile.label}</p>
-        ) : (
-          <>
-            <p className="text-xs text-gray-400">
-              &ldquo;General&rdquo; works for any subject. &ldquo;Competition Math&rdquo; draws on a bank of real AMC / AIME / F=ma contest problems &mdash; only pick it for math-contest prep.
-            </p>
-            <select
-              value={generatorProfile}
-              onChange={(e) => {
-                setGeneratorProfile(e.target.value);
-                saveField("generatorProfile", e.target.value);
-              }}
-              className="mt-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
-            >
-              {PROFILE_OPTIONS.map((p) => (
-                <option key={p.key} value={p.key}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
-      </div>
-
-      <div>
-        <label className="block text-sm font-semibold text-gray-500">Level / goals</label>
-        <p className="text-xs text-gray-400">{profile.levelHelp}</p>
-        <textarea
-          value={level}
-          onChange={(e) => setLevel(e.target.value)}
-          onBlur={() => saveField("level", level)}
-          rows={3}
-          className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-        />
-      </div>
-
-      <div>
-        <label className="block text-sm font-semibold text-gray-500">Rate (per session)</label>
-        <div className="mt-1 flex items-center gap-1">
-          <span className="text-gray-500">$</span>
-          <input
-            type="number"
-            min={0}
-            value={rate}
-            onChange={(e) => setRate(e.target.value)}
-            onBlur={() => saveField("rate", rate)}
-            className="w-28 rounded border border-gray-300 px-2 py-1.5 text-sm font-mono"
+    <Card>
+      <CardHeader
+        title="Profile"
+        description="What the generator knows about this student."
+        action={<SaveIndicator status={status} />}
+      />
+      <CardBody className="space-y-5">
+        <Field
+          label="Student profile"
+          htmlFor="student-profile"
+          hint={
+            <>
+              Subject, level, goals, and anything the generator should know. The more specific, the
+              better the problems &mdash; e.g. &ldquo;AIME, problems 10&ndash;15, number
+              theory&rdquo; or &ldquo;AP Biology, unit 3 genetics, shaky on meiosis&rdquo;.
+            </>
+          }
+        >
+          <Textarea
+            id="student-profile"
+            value={profile}
+            onChange={(e) => setProfile(e.target.value)}
+            onBlur={() => saveField("profile", profile)}
+            rows={3}
           />
-        </div>
-      </div>
+        </Field>
 
-      <div>
-        <label className="block text-sm font-semibold text-gray-500">Notes</label>
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          onBlur={() => saveField("notes", notes)}
-          rows={3}
-          placeholder="Anything not captured per-session"
-          className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
-        />
-      </div>
-
-      <div>
-        <label className="block text-sm font-semibold text-gray-500">Meet link</label>
-        <p className="text-xs text-gray-400">Used for every session with this student.</p>
-        {meetLink ? (
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <a
-              href={meetLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-blue-600 hover:underline break-all"
-            >
-              {meetLink}
-            </a>
-            {gcalConfigured && (
-              <button
-                onClick={generateMeet}
-                disabled={meetGenerating}
-                className="rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-60"
-              >
-                {meetGenerating ? "Generating…" : "Generate new"}
-              </button>
-            )}
-            <button
-              onClick={removeMeetLink}
-              disabled={meetSaving}
-              className="text-xs text-red-600 hover:underline disabled:opacity-60"
-            >
-              {meetSaving ? "Removing…" : "Remove"}
-            </button>
-          </div>
-        ) : (
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <input
-              type="url"
-              value={meetDraft}
-              onChange={(e) => {
-                setMeetDraft(e.target.value);
-                setMeetError(null);
-              }}
-              placeholder="https://meet.google.com/…"
-              className="rounded border border-gray-300 px-2 py-1.5 text-sm w-64"
+        <Field label="Rate (per session)" htmlFor="student-rate" className="max-w-[12rem]">
+          <div className="relative">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-mono text-sm text-muted">
+              $
+            </span>
+            <Input
+              id="student-rate"
+              type="number"
+              min={0}
+              value={rate}
+              onChange={(e) => setRate(e.target.value)}
+              onBlur={() => saveField("rate", rate)}
+              className="pl-7 font-mono"
             />
-            <button
-              onClick={saveMeetLink}
-              disabled={meetSaving}
-              className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-60"
-            >
-              {meetSaving ? "Saving…" : "Save"}
-            </button>
-            {gcalConfigured && (
-              <button
-                onClick={generateMeet}
-                disabled={meetGenerating}
-                className="rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-60"
-              >
-                {meetGenerating ? "Generating…" : "Generate"}
-              </button>
-            )}
           </div>
-        )}
-        {meetError && <p className="mt-1 text-xs text-red-600">{meetError}</p>}
-      </div>
-    </div>
+        </Field>
+
+        <Field label="Notes" htmlFor="student-notes">
+          <Textarea
+            id="student-notes"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            onBlur={() => saveField("notes", notes)}
+            rows={3}
+            placeholder="Anything not captured per-session"
+          />
+        </Field>
+
+        <Field
+          label="Meet link"
+          hint="Used for every session with this student."
+          error={meetError}
+        >
+          {meetLink ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-control border border-hairline bg-sunken/60 px-3 py-2">
+              <a
+                href={meetLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex min-w-0 items-center gap-1.5 break-all text-sm text-primary transition-colors duration-150 hover:text-primary-hover"
+              >
+                <LinkIcon className="h-3.5 w-3.5 shrink-0" />
+                {meetLink}
+              </a>
+              <span className="ml-auto flex items-center gap-2">
+                {gcalConfigured && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={generateMeet}
+                    loading={meetGenerating}
+                  >
+                    {meetGenerating ? "Generating…" : "Generate new"}
+                  </Button>
+                )}
+                <Button variant="danger" size="sm" onClick={removeMeetLink} loading={meetSaving}>
+                  {meetSaving ? "Removing…" : "Remove"}
+                </Button>
+              </span>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                type="url"
+                value={meetDraft}
+                onChange={(e) => {
+                  setMeetDraft(e.target.value);
+                  setMeetError(null);
+                }}
+                placeholder="https://meet.google.com/…"
+                className="w-64"
+              />
+              <Button onClick={saveMeetLink} loading={meetSaving}>
+                {meetSaving ? "Saving…" : "Save"}
+              </Button>
+              {gcalConfigured && (
+                <Button variant="secondary" onClick={generateMeet} loading={meetGenerating}>
+                  {meetGenerating ? "Generating…" : "Generate"}
+                </Button>
+              )}
+            </div>
+          )}
+        </Field>
+      </CardBody>
+    </Card>
   );
 }

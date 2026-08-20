@@ -7,7 +7,7 @@ import { Prisma } from "@prisma/client";
 // This module is a pure Google Calendar adapter: it makes Calendar API calls and
 // maps DB-shaped rows in, but never touches Prisma itself. Routes own all DB
 // reads/writes and hand shaped data in (see SESSION_FOR_GCAL_SELECT / the
-// remap return of propagateMeetLink). Calendar is per-user: every CRUD takes a
+// remap return of resyncStudentEvents). Calendar is per-user: every CRUD takes a
 // GCalAccount (the user's refresh token + target calendar), loaded from the DB by
 // the route via lib/gcal-account.ts. App OAuth client id/secret/redirect stay env.
 
@@ -32,7 +32,7 @@ export type SessionForGCal = {
   topic: string;
   paid: boolean;
   meetLink: string | null;
-  student: { name: string; subject: string; level: string };
+  student: { name: string; profile: string };
 };
 
 // The Prisma select every route uses to load a session for the GCal mirror, and
@@ -46,7 +46,7 @@ export const SESSION_FOR_GCAL_SELECT = {
   topic: true,
   paid: true,
   googleEventId: true,
-  student: { select: { name: true, subject: true, level: true, meetLink: true } },
+  student: { select: { name: true, profile: true, meetLink: true } },
 } satisfies Prisma.SessionSelect;
 
 export function toSessionForGCal(row: {
@@ -55,7 +55,7 @@ export function toSessionForGCal(row: {
   durationMin: number;
   topic: string;
   paid: boolean;
-  student: { name: string; subject: string; level: string; meetLink: string | null };
+  student: { name: string; profile: string; meetLink: string | null };
 }): SessionForGCal {
   return {
     id: row.id,
@@ -64,7 +64,7 @@ export function toSessionForGCal(row: {
     topic: row.topic,
     paid: row.paid,
     meetLink: row.student.meetLink,
-    student: { name: row.student.name, subject: row.student.subject, level: row.student.level },
+    student: { name: row.student.name, profile: row.student.profile },
   };
 }
 
@@ -111,8 +111,7 @@ function eventBody(session: SessionForGCal) {
   // always visible on the event even if the conferenceData approach is rejected.
   const descParts = [
     session.topic ? `Topic: ${session.topic}` : null,
-    session.student.subject ? `Subject: ${session.student.subject}` : null,
-    session.student.level ? `Level: ${session.student.level}` : null,
+    session.student.profile ? `Profile: ${session.student.profile}` : null,
     session.meetLink ? `Meet: ${session.meetLink}` : null,
   ].filter(Boolean);
   return {
@@ -192,6 +191,12 @@ export async function createEvent(account: GCalAccount, session: SessionForGCal)
 // returns HTTP 200 but silently writes to a dead event that never reappears
 // (and a hard-deleted event 404s). In both cases we re-create so the mirror
 // self-heals instead of pointing at a phantom id forever.
+//
+// CONSEQUENCE for OUR Session.status: never express a cancelled session by
+// patching Google's status to "cancelled". The check below would read it straight
+// back as "this event was cleared" and recreate the event, in a loop. Cancelling
+// DELETES the event and nulls googleEventId instead — see the state machine in
+// app/api/sessions/[id]/route.ts PATCH.
 export async function updateEvent(
   account: GCalAccount,
   googleEventId: string,
@@ -302,31 +307,43 @@ export async function attachMeetLink(
 // A session row loaded with SESSION_FOR_GCAL_SELECT (includes googleEventId).
 type SessionRowForGCal = Prisma.SessionGetPayload<{ select: typeof SESSION_FOR_GCAL_SELECT }>;
 
-// propagateMeetLink: mirrors a meetLink onto every passed synced GCal event. Run
-// after a student's meetLink changes (via generate or manual edit). Sequential on
-// purpose — small volume, rate-limit friendly. Per-event failures are swallowed;
-// the link will show up on the next sync or retry. Pure: the caller loads the rows
-// (filtered to googleEventId != null) and persists the returned event-id remaps —
-// this module never touches Prisma.
-export async function propagateMeetLink(
+// resyncStudentEvents: re-pushes the event body onto every one of a student's synced
+// GCal events. Run after any edit to a student field that SHOWS UP in the event —
+// which is the name (the event title) and the profile and meetLink (the description).
+// Rate is deliberately not one of them: the event carries no money, and a rate change
+// doesn't touch already-created sessions' `amount`.
+//
+// Callers load the rows AFTER writing the student, so each row already carries the new
+// name/profile/meetLink — this re-derives the body from the row rather than taking the
+// changed value as a parameter, so it can't disagree with what's in the DB.
+//
+// Sequential on purpose — small volume, rate-limit friendly. Per-event failures are
+// swallowed; the event corrects itself on the next sync or retry. Pure: the caller
+// loads the rows (filtered to googleEventId != null) and persists the returned
+// event-id remaps — this module never touches Prisma.
+export async function resyncStudentEvents(
   account: GCalAccount,
   rows: SessionRowForGCal[],
-  meetLink: string | null
+  // Set only when the meetLink itself just changed: the link needs re-attaching as
+  // structured conferenceData, which is a second Google call per event. A name or
+  // profile edit lives entirely in the event body, so it skips that cost.
+  { attachConference = false }: { attachConference?: boolean } = {}
 ): Promise<Array<{ id: string; newEventId: string }>> {
   const remaps: Array<{ id: string; newEventId: string }> = [];
   for (const row of rows) {
     if (!row.googleEventId) continue;
     const eventId = row.googleEventId;
     try {
-      // Reuse the shared mapper, but override meetLink with the new value being
-      // propagated (the caller's param is the source of truth for this run).
-      const newId = await updateEvent(account, eventId, { ...toSessionForGCal(row), meetLink });
+      const session = toSessionForGCal(row);
+      const newId = await updateEvent(account, eventId, session);
       // updateEvent recreates a deleted event and returns a fresh id — the caller
       // must persist these so the mirror stays linked.
       if (newId !== eventId) remaps.push({ id: row.id, newEventId: newId });
-      if (meetLink) await attachMeetLink(account, newId, meetLink);
+      if (attachConference && session.meetLink) {
+        await attachMeetLink(account, newId, session.meetLink);
+      }
     } catch (e) {
-      console.error(`GCal propagateMeetLink failed for session ${row.id} (non-blocking):`, e);
+      console.error(`GCal resyncStudentEvents failed for session ${row.id} (non-blocking):`, e);
     }
   }
   return remaps;

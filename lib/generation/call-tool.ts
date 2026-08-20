@@ -1,8 +1,6 @@
-// Low-level Anthropic tool-call primitives shared by both generation engines
-// (the competition-math corpus pipeline in app/api/generate/route.ts and the
-// corpus-free general engine in lib/generation/general.ts). Extracted verbatim so
-// there is ONE implementation of the double-encode recovery, the streaming vs.
-// non-streaming decision, and the transient-retry policy.
+// Low-level Anthropic tool-call primitives used by the generation pipeline
+// (lib/generation/problems.ts). ONE implementation of the double-encode recovery,
+// the streaming vs. non-streaming decision, and the transient-retry policy.
 //
 // We use tool-use (structured output) rather than parsing free text: LaTeX is
 // backslash-heavy and the model would frequently emit JSON that won't parse
@@ -28,7 +26,8 @@ export const PROBLEMS_TOOL: Anthropic.Tool = {
             solution: { type: "string", description: "Concise solution, 3–8 lines" },
             difficulty: {
               type: "string",
-              description: "Difficulty self-estimate as a competition reference, e.g. 'AIME #12'",
+              description:
+                "Difficulty self-estimate against the student's stated level — a competition reference where one applies (e.g. 'AIME #12'), otherwise a plain judgement (e.g. 'on target', 'slightly above')",
             },
           },
           required: ["problem", "answer", "solution", "difficulty"],
@@ -100,7 +99,8 @@ export const VARIANT_PROBLEMS_TOOL: Anthropic.Tool = {
             },
             difficulty: {
               type: "string",
-              description: "Difficulty self-estimate as a competition reference, e.g. 'AIME #12'",
+              description:
+                "Difficulty self-estimate against the student's stated level — a competition reference where one applies (e.g. 'AIME #12'), otherwise a plain judgement (e.g. 'on target', 'slightly above')",
             },
           },
           required: ["problem", "answer", "solutionSketch", "difficulty"],

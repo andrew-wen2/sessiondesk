@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/session";
 import { parseNonNegInt } from "@/lib/validation";
-import { getProfile } from "@/lib/subjects";
 
 // GET /api/students — all of the current user's students, sorted by name (combobox).
 export async function GET() {
@@ -10,11 +9,11 @@ export async function GET() {
     const userId = await getCurrentUserId();
     if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
-    // Combobox only needs id/name/rate/subject/level — skip notes, timestamps.
+    // Combobox only needs id/name/rate/profile — skip notes, timestamps.
     const students = await prisma.student.findMany({
       where: { userId },
       orderBy: { name: "asc" },
-      select: { id: true, name: true, rate: true, subject: true, level: true },
+      select: { id: true, name: true, rate: true, profile: true },
     });
     return NextResponse.json(students);
   } catch {
@@ -25,8 +24,8 @@ export async function GET() {
   }
 }
 
-// POST /api/students — create a student (name + rate, optionally subject +
-// generator profile). Level is filled in later from the Students view.
+// POST /api/students — create a student (name + rate). The profile description
+// that drives generation is filled in later from the Students view.
 export async function POST(request: Request) {
   try {
     const userId = await getCurrentUserId();
@@ -42,15 +41,10 @@ export async function POST(request: Request) {
     if (!rate.ok) {
       return NextResponse.json({ error: "Rate must be a non-negative number." }, { status: 400 });
     }
-    const subject = typeof body.subject === "string" ? body.subject.trim() : "";
-    // Normalize the profile through getProfile so only a known key is ever stored
-    // (unknown/absent → "general", the safe default).
-    const generatorProfile = getProfile(body.generatorProfile).key;
-
     // Return only id — the caller (AddSessionModal) reads student.id then POSTs
     // the session; it doesn't need the full student row.
     const student = await prisma.student.create({
-      data: { name, rate: rate.value, subject, generatorProfile, level: "", notes: null, userId },
+      data: { name, rate: rate.value, notes: null, userId },
       select: { id: true },
     });
     return NextResponse.json(student, { status: 201 });

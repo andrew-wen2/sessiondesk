@@ -1,6 +1,8 @@
 // Shared client-facing shapes (server components serialize Dates to ISO strings
 // before passing across the client boundary).
 
+import type { SessionStatus } from "@/lib/session-status";
+
 export type CalendarSession = {
   id: string;
   start: string; // ISO 8601
@@ -9,15 +11,19 @@ export type CalendarSession = {
   amount: number;
   studentName: string;
   topic: string; // shown in the calendar preview popover; "" when unset
+  // Stored status only — the calendar never renders effectiveStatus(). Deriving
+  // "completed" from the clock inside these components would mismatch between the
+  // server render and hydration for a session that just started.
+  status: SessionStatus;
 };
 
-// Fields the Add-session combobox needs — name + the rate/subject/level it autofills.
+// Fields the Add-session combobox needs — name + the rate it autofills, plus the
+// profile text it echoes back so you can see who you picked.
 export type StudentOption = {
   id: string;
   name: string;
   rate: number;
-  subject: string;
-  level: string;
+  profile: string;
 };
 
 export type Problem = {

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/session";
 import { UsageAccountant } from "@/lib/generation/usage-accounting";
 import { generateLesson } from "@/lib/generation/lesson";
+import { planFor } from "@/lib/generation/plan";
 import { acquireSlot, releaseSlot, TOO_MANY_MESSAGE } from "@/lib/generation/rate-limit";
 
 // POST /api/generate-lesson — server-only. Uses ANTHROPIC_API_KEY from env.
@@ -37,7 +38,7 @@ export async function POST(request: Request) {
 
     // All reads scoped to the current user (IDOR).
     const [student, sessionRow, recent] = await Promise.all([
-      prisma.student.findFirst({ where: { id: studentId, userId }, select: { subject: true, level: true } }),
+      prisma.student.findFirst({ where: { id: studentId, userId }, select: { profile: true } }),
       prisma.session.findFirst({ where: { id: sessionId, userId }, select: { id: true } }),
       prisma.session.findMany({
         where: { studentId, userId, topic: { not: "" } },
@@ -53,9 +54,20 @@ export async function POST(request: Request) {
     const accountant = new UsageAccountant();
     const client = new Anthropic({ maxRetries: 4, timeout: maxDuration * 1000 });
 
+    const recentTopics = recent.map((s) => s.topic);
+    // Same plan stage the problem pipeline uses, so a lesson is calibrated to the
+    // same inferred subject and difficulty rubric as that session's problems.
+    const plan = await planFor({
+      client,
+      profile: student.profile,
+      topic,
+      recentTopics,
+      recordUsage: (u) => accountant.record("plan", u),
+    });
+
     const result = await generateLesson({
       client,
-      input: { subject: student.subject, level: student.level, topic, recentTopics: recent.map((s) => s.topic) },
+      input: { profile: student.profile, topic, recentTopics, plan },
       recordUsage: (u) => accountant.record("generation", u),
     });
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: 500 });

@@ -11,7 +11,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 
-export type Stage = "seed-sketch" | "generation" | "verification" | "expansion";
+export type Stage = "plan" | "seed-sketch" | "generation" | "verification" | "expansion";
 
 type StageTotals = {
   input: number;
@@ -54,7 +54,7 @@ export class UsageAccountant {
   // reads 0 and hides the real spend; generation output-per-problem is the honest cost
   // signal — the metric that tracks the heavy-reasoning regression the adapt staging targets.
   summaryLine(meta: { tier: string; count: number }): string {
-    const order: Stage[] = ["seed-sketch", "generation", "verification", "expansion"];
+    const order: Stage[] = ["plan", "seed-sketch", "generation", "verification", "expansion"];
     let totalThinking = 0;
     const parts: string[] = [];
     for (const stage of order) {

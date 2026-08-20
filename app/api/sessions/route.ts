@@ -4,53 +4,25 @@ import { getCurrentUserId } from "@/lib/session";
 import { createEvent, toSessionForGCal, SESSION_FOR_GCAL_SELECT } from "@/lib/gcal";
 import { getGcalAccount } from "@/lib/gcal-account";
 import { parseNonNegInt, parseDate } from "@/lib/validation";
+import { parseOccurrences } from "@/lib/recurrence";
 
-// GET /api/sessions?month=YYYY-MM — the user's sessions in the month, with student name.
-export async function GET(request: Request) {
-  try {
-    const userId = await getCurrentUserId();
-    if (!userId) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
+// There is no GET here: the calendar is a server component and queries Prisma
+// directly (app/page.tsx), so a month-listing endpoint had no callers.
 
-    const { searchParams } = new URL(request.url);
-    const month = searchParams.get("month") ?? new Date().toISOString().slice(0, 7);
-    const [year, mon] = month.split("-").map(Number);
+// A repeating slot can create up to 52 sessions, each needing its own Calendar
+// insert. Those run sequentially in after(), which is billed to this invocation's
+// budget — the default limit would kill the loop partway.
+export const maxDuration = 60;
 
-    if (!year || !mon || mon < 1 || mon > 12) {
-      return NextResponse.json({ error: "Invalid month — use YYYY-MM." }, { status: 400 });
-    }
-
-    const start = new Date(year, mon - 1, 1);
-    const end = new Date(year, mon, 1);
-
-    // Calendar chips need id/start/paid/googleEventId and student name only.
-    // Omit problems (heavy Json) and homework — the calendar never renders them.
-    const sessions = await prisma.session.findMany({
-      where: { userId, start: { gte: start, lt: end } },
-      select: {
-        id: true,
-        studentId: true,
-        start: true,
-        durationMin: true,
-        topic: true,
-        amount: true,
-        paid: true,
-        googleEventId: true,
-        createdAt: true,
-        student: { select: { name: true } },
-      },
-      orderBy: { start: "asc" },
-    });
-    return NextResponse.json(sessions);
-  } catch {
-    return NextResponse.json(
-      { error: "Could not load sessions — refresh and try again." },
-      { status: 500 }
-    );
-  }
-}
-
-// POST /api/sessions — create a session. amount is copied from the student rate
-// by the caller; durationMin defaults to 60.
+// POST /api/sessions — create one session, or a whole recurring series.
+//
+// Body: { studentId, start | starts[], durationMin?, topic?, amount }
+//   `start`  — a single ISO instant (the original, unchanged path).
+//   `starts` — an array of ISO instants for a repeating slot. The CLIENT expands the
+//              recurrence rule, because only the browser knows the tutor's timezone
+//              and stepping calendar days in the wrong zone shifts the wall-clock
+//              hour across a DST boundary (see lib/recurrence.ts). We never trust the
+//              array: parseOccurrences bounds its length, order, and span.
 export async function POST(request: Request) {
   try {
     const userId = await getCurrentUserId();
@@ -64,10 +36,25 @@ export async function POST(request: Request) {
     if (!studentId) {
       return NextResponse.json({ error: "Pick a student first." }, { status: 400 });
     }
-    const start = parseDate(typeof body.start === "string" ? body.start : "");
-    if (!start.ok) {
-      return NextResponse.json({ error: "Invalid date/time." }, { status: 400 });
+
+    let starts: Date[];
+    if (body.starts !== undefined) {
+      const parsed = parseOccurrences(body.starts);
+      if (!parsed.ok) {
+        return NextResponse.json(
+          { error: "Invalid repeat schedule — reload and try again." },
+          { status: 400 }
+        );
+      }
+      starts = parsed.value;
+    } else {
+      const start = parseDate(typeof body.start === "string" ? body.start : "");
+      if (!start.ok) {
+        return NextResponse.json({ error: "Invalid date/time." }, { status: 400 });
+      }
+      starts = [start.value];
     }
+
     const amount = parseNonNegInt(body.amount);
     if (!amount.ok) {
       return NextResponse.json({ error: "Rate must be a non-negative number." }, { status: 400 });
@@ -83,39 +70,71 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Pick a student first." }, { status: 400 });
     }
 
-    // Include student name + meetLink for the GCal event; the client reads only res.ok.
-    const session = await prisma.session.create({
-      data: {
-        userId,
-        studentId,
-        start: start.value,
-        durationMin: Number.isFinite(durationMin) ? durationMin : 60,
-        topic,
-        amount: amount.value,
-      },
-      select: SESSION_FOR_GCAL_SELECT,
-    });
+    const shared = {
+      userId,
+      studentId,
+      durationMin: Number.isFinite(durationMin) ? durationMin : 60,
+      topic,
+      amount: amount.value,
+    };
+
+    let sessions;
+    if (starts.length === 1) {
+      // Single create goes through create(), which RETURNS the row it made. The
+      // series path below can't use that (createMany yields only a count), but it
+      // must not be used here either: a re-read keyed on (studentId, start) is not
+      // unique — a student can legitimately have two sessions at the same instant,
+      // and the calendar already lays overlapping sessions out side by side — so it
+      // could hand back a different session's id than the one just created.
+      sessions = [
+        await prisma.session.create({ data: { ...shared, start: starts[0] }, select: SESSION_FOR_GCAL_SELECT }),
+      ];
+    } else {
+      // A series id only means something when there's more than one occurrence to
+      // group; a lone session stays standalone so it never shows scope controls.
+      const seriesId = crypto.randomUUID();
+      await prisma.session.createMany({
+        data: starts.map((start) => ({ ...shared, start, seriesId })),
+      });
+      // Re-read for the GCal mirror, which needs the nested student select. Keyed on
+      // the freshly-minted seriesId, so it matches exactly this batch — and scoped by
+      // userId too, never by the grouping key alone.
+      sessions = await prisma.session.findMany({
+        where: { userId, seriesId },
+        select: SESSION_FOR_GCAL_SELECT,
+        orderBy: { start: "asc" },
+      });
+    }
 
     // Mirror to Google Calendar after the response flushes — never block the
-    // create on a Google round-trip. The session is already saved; a GCal
+    // create on a Google round-trip. Each session is already saved; a GCal
     // failure just leaves googleEventId null ("not synced" flag + retry).
     const account = await getGcalAccount(userId);
     if (account) {
       after(async () => {
-        try {
-          const googleEventId = await createEvent(account, toSessionForGCal(session));
-          await prisma.session.update({
-            where: { id: session.id },
-            data: { googleEventId },
-          });
-        } catch (e) {
-          console.error("GCal sync failed (create):", e);
+        // Sequential, and each id persisted as soon as its event exists rather than
+        // batched at the end: if the invocation is killed partway through a long
+        // series, the occurrences already created stay correctly linked and the rest
+        // are left null for the "Sync all to Calendar" backfill to pick up.
+        for (const session of sessions) {
+          try {
+            const googleEventId = await createEvent(account, toSessionForGCal(session));
+            await prisma.session.update({
+              where: { id: session.id },
+              data: { googleEventId },
+            });
+          } catch (e) {
+            console.error("GCal sync failed (create):", e);
+          }
         }
       });
     }
 
-    return NextResponse.json(session, { status: 201 });
-  } catch {
+    // The client reads only res.ok and the count; return the first session so the
+    // single-create response shape is unchanged.
+    return NextResponse.json({ ...sessions[0], created: sessions.length }, { status: 201 });
+  } catch (e) {
+    console.error("[/api/sessions POST]", e);
     return NextResponse.json(
       { error: "Could not create session — try again." },
       { status: 500 }

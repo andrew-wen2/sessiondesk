@@ -1,6 +1,6 @@
 // Maps a student to a competition + difficulty band for corpus anchor retrieval
-// and rubric selection, inferred entirely from the free-text `level`. There are
-// no manual calibration fields — the level string is the single source, so keep
+// and rubric selection, inferred entirely from the free-text `profile`. There are
+// no manual calibration fields — the profile string is the single source, so keep
 // the competition name and problem-number band explicit in it.
 
 export type Competition = "AMC10" | "AMC12" | "AIME" | "Fma";
@@ -46,9 +46,11 @@ const DEFAULT_BAND: Record<Competition, [number, number]> = {
   Fma: [12, 25],
 };
 
-// Infer competition + difficulty band from the student's level text.
-export function calibrationFor(student: { level: string }): Calibration {
-  const text = student.level;
+// Infer competition + difficulty band from the student's profile text. Returns a
+// null competition when the text names none — that is the signal the corpus can't
+// help, which routes the request through the plan stage's model path instead.
+export function calibrationFor(student: { profile: string }): Calibration {
+  const text = student.profile;
   const competition = detectCompetition(text);
   let [bandLow, bandHigh] = detectBand(text, competition);
   if (competition && bandLow == null && bandHigh == null) {
@@ -91,9 +93,9 @@ export function countForTier(tier: "easy" | "mid" | "hard"): number {
   return tier === "hard" ? 5 : 10;
 }
 
-// Coarse category for retrieval, from the student's level + session topic.
-export function categoryFor(level: string, topic: string): string | null {
-  const s = `${level} ${topic}`.toLowerCase();
+// Coarse category for retrieval, from the student's profile + session topic.
+export function categoryFor(profile: string, topic: string): string | null {
+  const s = `${profile} ${topic}`.toLowerCase();
   if (/geometr|triangle|circle|angle|polygon/.test(s)) return "geometry";
   if (/combinatori|probabilit|counting|permutation|combination/.test(s)) return "combinatorics";
   if (/number\s*theor|divisor|prime|modul|congruen/.test(s)) return "number_theory";

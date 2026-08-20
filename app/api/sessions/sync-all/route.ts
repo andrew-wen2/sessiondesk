@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/session";
-import { createEvent, updateEvent, toSessionForGCal, SESSION_FOR_GCAL_SELECT } from "@/lib/gcal";
+import { createEvent, updateEvent, deleteEvent, toSessionForGCal, SESSION_FOR_GCAL_SELECT } from "@/lib/gcal";
 import { getGcalAccount } from "@/lib/gcal-account";
+import { monthBounds } from "@/lib/dates";
+
+// Reconciling a month's sessions plus the orphan-cleanup pass makes one sequential
+// Google Calendar call per row before the response returns.
+export const maxDuration = 60;
 
 // POST /api/sessions/sync-all — reconcile the DB → GCal mirror for one month.
 // Backfills events for sessions whose googleEventId is null and patches the
@@ -25,17 +30,16 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => ({}));
     const month = typeof body.month === "string" ? body.month : "";
-    if (!/^\d{4}-\d{2}$/.test(month)) {
+    const range = monthBounds(month);
+    if (!range) {
       return NextResponse.json({ error: "Invalid month — reload and try again." }, { status: 400 });
     }
+    const { start, end } = range;
 
-    // Same range math as the calendar page (app/page.tsx).
-    const [year, mon] = month.split("-").map(Number);
-    const start = new Date(year, mon - 1, 1);
-    const end = new Date(year, mon, 1);
-
+    // Cancelled sessions are excluded: a cancelled session is *supposed* to have no
+    // event, so reconciling them would recreate everything the tutor just cancelled.
     const sessions = await prisma.session.findMany({
-      where: { userId, start: { gte: start, lt: end } },
+      where: { userId, start: { gte: start, lt: end }, status: { not: "cancelled" } },
       select: SESSION_FOR_GCAL_SELECT,
       orderBy: { start: "asc" },
     });
@@ -43,6 +47,32 @@ export async function POST(request: Request) {
     let created = 0;
     let patched = 0;
     let failed = 0;
+    let removed = 0;
+
+    // Orphan pass: a cancelled session still holding a googleEventId means the
+    // cancel-time delete failed after the DB link was nulled — or never ran. Nothing
+    // else can find those events (the session-level retry path refuses cancelled
+    // sessions), so this is the only thing that cleans them up.
+    const orphans = await prisma.session.findMany({
+      where: {
+        userId,
+        start: { gte: start, lt: end },
+        status: "cancelled",
+        googleEventId: { not: null },
+      },
+      select: { id: true, googleEventId: true },
+    });
+    for (const o of orphans) {
+      if (!o.googleEventId) continue;
+      try {
+        await deleteEvent(account, o.googleEventId);
+        await prisma.session.update({ where: { id: o.id }, data: { googleEventId: null } });
+        removed++;
+      } catch (e) {
+        console.error("[/api/sessions/sync-all] cancelled orphan", e);
+        failed++;
+      }
+    }
 
     // Sequential on purpose: the volume is tiny and serial avoids bursting the
     // Google rate limit.
@@ -71,7 +101,7 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ created, patched, failed, total: sessions.length });
+    return NextResponse.json({ created, patched, removed, failed, total: sessions.length });
   } catch (e) {
     console.error("[/api/sessions/sync-all POST]", e);
     return NextResponse.json({ error: "Sync failed — try again." }, { status: 500 });

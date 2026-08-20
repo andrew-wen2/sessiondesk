@@ -15,7 +15,7 @@ const SEED_PASSWORD = process.env.SEED_PASSWORD || "changeme123";
 // 0=Sun, 1=Mon ... 6=Sat. Recurring weekday + start hour (local) per student.
 export type StudentSeed = {
   name: string;
-  level: string;
+  profile: string;
   rate: number;
   notes: string;
   weekday: number;
