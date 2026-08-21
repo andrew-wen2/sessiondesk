@@ -6,7 +6,11 @@ const prisma = new PrismaClient();
 // account), leaving the empty source user in place. Idempotent — rows already on
 // the target are skipped by the `not` filter.
 async function main() {
-  const targetEmail = (process.argv[2] || "awen2815@gmail.com").toLowerCase();
+  const targetEmailArg = process.argv[2];
+  if (!targetEmailArg) {
+    throw new Error("Usage: npx tsx scripts/reassign-data.ts <target-email>");
+  }
+  const targetEmail = targetEmailArg.toLowerCase();
 
   const target = await prisma.user.findUnique({ where: { email: targetEmail } });
   if (!target) {
