@@ -23,12 +23,12 @@ import { ArrowRight, ChevronLeft, ChevronRight, X } from "./icons";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-// Time-grid geometry (week + day views): pixels per hour, and the default visible hour
-// window (8am–9pm) which expands to fit any session outside it. Pointer gestures snap to
-// SNAP minutes; a resize can't go below MIN_DURATION.
+// Time-grid geometry (week + day views): pixels per hour, and the visible hour window
+// (the full day, midnight–midnight — the grid opens scrolled to "now", see below).
+// Pointer gestures snap to SNAP minutes; a resize can't go below MIN_DURATION.
 const HOUR_PX = 48;
-const DEFAULT_START_HOUR = 8;
-const DEFAULT_END_HOUR = 21;
+const DEFAULT_START_HOUR = 0;
+const DEFAULT_END_HOUR = 24;
 const SNAP = 15;
 const MIN_DURATION = 15;
 // How far the pointer must travel before a press counts as a drag rather than a click.

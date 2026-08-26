@@ -34,3 +34,5 @@ next-env.d.ts
 
 # student data — real roster, never commit (use seed.roster.example.ts as the template)
 /prisma/seed.roster.ts
+.vercel
+.env*

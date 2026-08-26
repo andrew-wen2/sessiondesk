@@ -338,7 +338,10 @@ export default function AddSessionModal({
           )}
 
           {/* Topic */}
-          <Field label="What we'll cover" htmlFor="add-topic">
+          <Field
+            label={repeat === "none" ? "What we'll cover" : "What we'll cover (this session only)"}
+            htmlFor="add-topic"
+          >
             <Textarea
               id="add-topic"
               value={topic}

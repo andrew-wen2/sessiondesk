@@ -74,7 +74,6 @@ export async function POST(request: Request) {
       userId,
       studentId,
       durationMin: Number.isFinite(durationMin) ? durationMin : 60,
-      topic,
       amount: amount.value,
     };
 
@@ -87,14 +86,21 @@ export async function POST(request: Request) {
       // and the calendar already lays overlapping sessions out side by side — so it
       // could hand back a different session's id than the one just created.
       sessions = [
-        await prisma.session.create({ data: { ...shared, start: starts[0] }, select: SESSION_FOR_GCAL_SELECT }),
+        await prisma.session.create({
+          data: { ...shared, start: starts[0], topic },
+          select: SESSION_FOR_GCAL_SELECT,
+        }),
       ];
     } else {
       // A series id only means something when there's more than one occurrence to
       // group; a lone session stays standalone so it never shows scope controls.
+      // "What we'll cover" applies to this booking only, not the whole series — the
+      // same rule series edits already follow (see lib/session-status.ts): topic
+      // feeds the learning history per session, so stamping it onto every future
+      // occurrence up front would rewrite history that hasn't happened yet.
       const seriesId = crypto.randomUUID();
       await prisma.session.createMany({
-        data: starts.map((start) => ({ ...shared, start, seriesId })),
+        data: starts.map((start, i) => ({ ...shared, start, seriesId, topic: i === 0 ? topic : "" })),
       });
       // Re-read for the GCal mirror, which needs the nested student select. Keyed on
       // the freshly-minted seriesId, so it matches exactly this batch — and scoped by
