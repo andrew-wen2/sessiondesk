@@ -1,4 +1,4 @@
-# Session Desk
+# SessionDesk
 
 [![CI](https://github.com/andrew-wen2/tutor-app/actions/workflows/ci.yml/badge.svg)](https://github.com/andrew-wen2/tutor-app/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Design tokens — Session Desk.
+/* Design tokens — SessionDesk.
    Stored as RGB *channels*, not hex, so Tailwind's <alpha-value> opacity modifiers
    work against them (bg-primary/10, bg-ink/40, ring-warn/20, …). tailwind.config.ts
    only names these; change a value here and every surface in the app follows.

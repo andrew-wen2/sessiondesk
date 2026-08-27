@@ -1,4 +1,4 @@
-// Session Desk data model. Per-user multi-tenant: User owns Student/Session.
+// SessionDesk data model. Per-user multi-tenant: User owns Student/Session.
 // Payment is a boolean on Session (YAGNI). "Learned so far" is derived from
 // session topics, never stored. ReferenceProblem is a global shared corpus.
 

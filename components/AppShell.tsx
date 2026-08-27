@@ -179,7 +179,7 @@ export function Wordmark() {
       >
         S
       </span>
-      <span className="text-[15px] font-semibold tracking-tight text-ink">Session Desk</span>
+      <span className="text-[15px] font-semibold tracking-tight text-ink">SessionDesk</span>
     </span>
   );
 }

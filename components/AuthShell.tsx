@@ -25,7 +25,7 @@ export default function AuthShell({
           >
             S
           </span>
-          <span className="text-base font-semibold tracking-tight text-ink">Session Desk</span>
+          <span className="text-base font-semibold tracking-tight text-ink">SessionDesk</span>
         </div>
 
         <Card>

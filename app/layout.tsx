@@ -20,7 +20,7 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Session Desk",
+  title: "SessionDesk",
   description: "Tutoring session manager",
 };
 
