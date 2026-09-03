@@ -16,6 +16,9 @@
     "cleanup:corpus": "tsx scripts/cleanup-corpus.ts",
     "scrape:solutions": "tsx scripts/scrape-solutions.ts",
     "set-password": "tsx scripts/set-password.ts",
+    "dump:corpus-fixtures": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.env scripts/dump-corpus-fixtures.ts",
+    "eval:solver": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.env scripts/eval-solver.ts",
+    "eval:generation": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.env scripts/eval-generation.ts",
     "postinstall": "prisma generate"
   },
   "prisma": {
@@ -30,6 +33,7 @@
   ],
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
+    "@google/genai": "^2.21.0",
     "@prisma/client": "^6.1.0",
     "bcryptjs": "^3.0.3",
     "docx": "^9.7.1",

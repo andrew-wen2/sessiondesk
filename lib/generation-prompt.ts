@@ -52,7 +52,10 @@ export const RUBRICS: Record<string, string> = {
 // The answer-format instruction for a non-contest subject, keyed off the plan's
 // answerFormat. These mirror what `answerOkFor` enforces in the verifier — keep the
 // two in step, or the model will be told one thing and graded on another.
-const ANSWER_FORMAT_RULES: Record<AnswerFormat, string> = {
+// Exported for lib/generation/solve.ts — the solver's answer-format instruction
+// must match what the generator was told, or a format mismatch reads as a false
+// disagreement.
+export const ANSWER_FORMAT_RULES: Record<AnswerFormat, string> = {
   integer: `It is a single integer.`,
   numeric: `It is the exact computed value (integer, fraction, or exact expression) — never an option letter.`,
   expression: `It is a symbolic expression in the given variables — not a number with units, never an option letter.`,
@@ -319,12 +322,12 @@ For each item, output a numbered list of the solution's major steps, in order, e
 - Do NOT introduce a new method, correct, or second-guess the given solution. If the given solution has a gap, sketch it as-is.
 - The last line must state the final answer and equal the given answer.
 - Math notation: $...$ inline, $$...$$ display.
-Call the emit_seed_sketches tool with one sketch string per item, index-aligned to the items below, and return NOTHING else.`;
+Call the emit_seed_sketches tool with one entry per item, each carrying its own "index" field matching the seed number below (0-based), and return NOTHING else.`;
 
-  const user = `Distill each solution into a numbered sketch (index-aligned):\n${items
+  const user = `Distill each solution into a numbered sketch. Echo each seed's index in your response:\n${items
     .map(
       (it, i) =>
-        `--- Seed ${i + 1} ---\nProblem: ${it.statement}${it.answer ? `\nAnswer: ${it.answer}` : ""}\nSolution: ${it.solution}`
+        `--- Seed index=${i} ---\nProblem: ${it.statement}${it.answer ? `\nAnswer: ${it.answer}` : ""}\nSolution: ${it.solution}`
     )
     .join("\n\n")}`;
 
@@ -341,12 +344,12 @@ For each item, write a concise but complete forward derivation (3–6 lines) tha
 - Clean, linear, forward derivation only. NO backtracking or self-correction: never "wait", "actually", "recheck", "recompute", "let me", "verify", "confirm", "that's wrong", or any crossed-out work.
 - The last line must equal the given answer.
 - Math notation: $...$ for inline, $$...$$ for display. Write a literal currency sign as \\$ (a bare $ is a math delimiter).
-Call the emit_solutions tool with one entry per item, index-aligned to the items below, and return NOTHING else.`;
+Call the emit_solutions tool with one entry per item, each carrying its own "index" field matching the item number below (0-based), and return NOTHING else.`;
 
-  const user = `Expand each sketch into a full solution (index-aligned):\n${items
+  const user = `Expand each sketch into a full solution. Echo each item's index in your response:\n${items
     .map(
       (it, i) =>
-        `--- Item ${i + 1} ---\nProblem: ${it.problem}\nAnswer: ${it.answer}\nSketch: ${it.solutionSketch}`
+        `--- Item index=${i} ---\nProblem: ${it.problem}\nAnswer: ${it.answer}\nSketch: ${it.solutionSketch}`
     )
     .join("\n\n")}`;
 
@@ -368,6 +371,32 @@ Call the emit_audit tool with one verdict per item, index-aligned to the items b
         `--- Item ${i + 1} ---\nProblem: ${it.problem}\nProposed answer: ${it.answer}\nSketch: ${it.solutionSketch}`
     )
     .join("\n\n")}`;
+
+  return { system, user };
+}
+
+// INDEPENDENT SOLVER (lib/generation/solve.ts). Structurally independent: this
+// prompt is built from the problem statement + the plan's subject/rubric context
+// ONLY — it never receives the generator's answer or the corpus seed. Agreement
+// between this and the generator's self-reported answer is what makes a stored
+// answer trustworthy; if this prompt ever leaked the generator's answer, agreement
+// would measure nothing.
+export function buildSolvePrompt(args: {
+  problem: string;
+  domain: string;
+  rubric: string;
+  answerFormat: AnswerFormat;
+}): { system: string; user: string } {
+  const { problem, domain, rubric, answerFormat } = args;
+  const system = `You are an expert solver working a practice problem cold — you have not seen it before and no proposed answer exists yet. Solve it completely and correctly.
+Subject: ${domain || "general"}. ${rubric ? `Calibration context (not part of the problem): ${rubric}` : ""}
+- Work the problem through fully before answering. Do not guess.
+- The "answer" field holds ONLY the final answer, no working. ${ANSWER_FORMAT_RULES[answerFormat]}
+- If the problem as stated is genuinely ill-posed, ambiguous, or unanswerable (not merely hard), set "ambiguous" to true and explain why in "note" — otherwise leave "ambiguous" false.
+- Math notation: $...$ for inline, $$...$$ for display.
+Call the emit_solve tool and return NOTHING else.`;
+
+  const user = `Solve this problem:\n${problem}`;
 
   return { system, user };
 }

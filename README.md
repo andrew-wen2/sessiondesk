@@ -10,7 +10,7 @@ A tutoring session manager — calendar, student roster, payments, and calibrate
 - **Calendar** — month/week views, drag to reschedule/resize, weekly/biweekly recurrence, one-way Google Calendar mirror.
 - **Students** — roster with rate, free-text profile, a derived learning-history timeline, amount owed, archiving.
 - **Payments** — owed totals over a filterable date range, mark-paid (optimistic, via an overrides map over server rows so a filter re-render can't silently revert it), CSV export.
-- **Problem generation** — one subject-agnostic pipeline: a `GenerationPlan` derived per request, not a per-subject engine. Anchored to a real AMC/AIME/F=ma corpus for contest math, a model-classified rubric otherwise. Structured output comes back through Anthropic tool-use rather than `JSON.parse` (LaTeX backslashes break naive JSON parsing), and every problem is verified (format, answer validity, no truncation) before being returned.
+- **Problem generation** — one subject-agnostic pipeline: a `GenerationPlan` derived per request, not a per-subject engine. Anchored to a real AMC/AIME/F=ma corpus for contest math, a model-classified rubric otherwise. Structured output comes back through Anthropic tool-use rather than `JSON.parse` (LaTeX backslashes break naive JSON parsing). Every problem passes format/hygiene guards (no truncation, no thinking-out-loud, no placeholder answers), and its answer is independently re-derived by a second model (Claude Opus, never shown the generator's own answer) before the set is returned — agreement is what makes the stored answer trustworthy, not the generator's say-so.
 - **Dashboard** — revenue, hours, and trend charts, computed server-side from the same billing rules as the student page.
 
 ## Tech stack
@@ -45,6 +45,8 @@ npm run dev
 | `npm run check` | Vitest over pure `lib/` logic: recurrence + DST, the owed rule, CSV escaping |
 | `npm run lint` | ESLint |
 | `npm run set-password -- <email> <password>` | Set/reset a user's password |
+| `npm run eval:solver -- --yes` | Score the independent answer-solver against ~60 real corpus problems with known answers (see `scripts/README.md`) |
+| `npm run eval:generation -- --yes` | Run the generation pipeline over fixture profiles, then `--rate` and `--compare` two runs |
 
 ## License
 

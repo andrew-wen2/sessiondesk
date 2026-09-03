@@ -6,6 +6,7 @@ import { getCurrentUserId } from "@/lib/session";
 import { UsageAccountant } from "@/lib/generation/usage-accounting";
 import { generateProblems } from "@/lib/generation/problems";
 import { acquireSlot, releaseSlot, TOO_MANY_MESSAGE } from "@/lib/generation/rate-limit";
+import { GEN_META_VERSION, truncateGenMeta, type GenMeta } from "@/lib/generation/gen-meta";
 
 // POST /api/generate — server-only. Uses ANTHROPIC_API_KEY from env; never
 // import this route or the SDK in a client component.
@@ -82,7 +83,8 @@ export async function POST(request: Request) {
       // throw happens while evaluating the default, before options are spread); only a
       // client-level timeout short-circuits the `??`. Pin it to maxDuration (the Vercel
       // function cap, in ms) — past it the request can't finish anyway. Streaming tiers
-      // are unaffected by the value.
+      // are unaffected by the value. NOTE: the independent solver (lib/generation/solve.ts)
+      // deliberately does NOT share this client — see its own short-timeout client.
       const client = new Anthropic({ maxRetries: 4, timeout: maxDuration * 1000 }); // reads ANTHROPIC_API_KEY from env
 
       const result = await generateProblems({
@@ -92,13 +94,28 @@ export async function POST(request: Request) {
         recentTopics: recent.map((s) => s.topic),
         accountant,
       });
-      if (!result.ok) return NextResponse.json({ error: result.error }, { status: 500 });
+
+      // genMeta is written on BOTH outcomes (Eng T5): the failures are exactly the
+      // runs that most need a join key to how they were attempted, and writing it
+      // only beside a successful `problems` update would leave none for them.
+      const genMeta: GenMeta = truncateGenMeta({ v: GEN_META_VERSION, problems: result.meta });
+      const genMetaJson = genMeta as unknown as Prisma.InputJsonValue;
+
+      if (!result.ok) {
+        await prisma.session
+          .update({ where: { id: sessionId }, data: { genMeta: genMetaJson } })
+          .catch((e) => console.error("[/api/generate] failed to persist genMeta on failure", e));
+        return NextResponse.json({ error: result.error }, { status: 500 });
+      }
 
       console.log(accountant.summaryLine({ tier: result.plan.tier, count: result.count }));
 
       await prisma.session.update({
         where: { id: sessionId },
-        data: { problems: result.problems as unknown as Prisma.InputJsonValue },
+        data: {
+          problems: result.problems as unknown as Prisma.InputJsonValue,
+          genMeta: genMetaJson,
+        },
       });
 
       return NextResponse.json(result.problems);

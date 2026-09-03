@@ -47,3 +47,42 @@ needs it. AAPT exams are copyrighted; stored for internal calibration only.
 
 Problem statements are stored for personal, internal calibration use only. Do not
 redistribute the corpus.
+
+## Generation pipeline eval
+
+Two scripts, two different jobs. Both spend real Anthropic API credit and both
+refuse to run without `--yes` (use `--dry-run` first to see what they'd do and an
+estimated cost).
+
+**`eval-solver.ts`** — is the independent solver (`lib/generation/solve.ts`) any
+good? Feeds ~60 real corpus problems with known-verified answers (sampled by
+`dump-corpus-fixtures.ts` into `scripts/eval-fixtures/corpus-sample.json`, committed
+— no live DB connection needed to run the eval itself) and reports accuracy by
+source. **This is an upper bound, not an estimate**, on generated-problem accuracy —
+see the file header for why.
+
+```
+npx tsx scripts/dump-corpus-fixtures.ts   # one-time / re-run to refresh the sample
+npm run eval:solver -- --dry-run
+npm run eval:solver -- --yes --out runs/solver-baseline.jsonl
+```
+
+**`eval-generation.ts`** — is a change to the pipeline better or worse? Runs the
+real `generateProblems()` pipeline against `scripts/eval-fixtures/generation-fixtures.json`
+(15 synthetic student profiles spanning AIME 10-15 down to non-contest Spanish).
+Contest-anchored fixtures legitimately touch Prisma via the pipeline's own corpus
+retrieval — that's the system under test doing its normal job, not a bootstrap
+dependency; non-contest fixtures never touch the corpus at all.
+
+```
+npm run eval:generation -- --dry-run
+npm run eval:generation -- --yes --out runs/baseline.jsonl
+npm run eval:generation -- --rate runs/baseline.jsonl        # your 1-5 rating — THE headline metric
+npm run eval:generation -- --compare runs/baseline.jsonl runs/candidate.jsonl
+```
+
+Automated numbers (agreement rate, kept/asked, dollars) are diagnostics, not the
+score — they're gameable by loosening the guards, which is exactly the kind of
+change this eval exists to catch. `--rate` is what actually answers "did this
+change help." Run output goes to `/runs`, gitignored (may contain real generated
+problems); the fixtures under `eval-fixtures/` are synthetic and committed.

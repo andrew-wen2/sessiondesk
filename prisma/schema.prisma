@@ -88,6 +88,13 @@ model Session {
   topic         String   @default("")
   problems      Json?
   lesson        Json?    // generated lesson blob (title/objectives/sections/workedExamples/practice); parallel to `problems`
+  // Generation provenance: {v, problems?, lesson?} — provider/model per stage, per-item
+  // verification verdicts, token counts, drop reasons. Written by both /api/generate and
+  // /api/generate-lesson (same row, keyed by producer), and on failure too. Shape lives in
+  // lib/generation/gen-meta.ts (GenMeta, parseGenMeta). Readable by session id only — a
+  // Json column can't be filtered without queryRaw, which this repo forbids; don't plan
+  // analytics on it. Existing rows read NULL — treat as unknown provenance, not zero cost.
+  genMeta       Json?
   amount        Int
   paid          Boolean  @default(false)
   // Lifecycle: "scheduled" | "completed" | "cancelled" | "no_show". String (not a

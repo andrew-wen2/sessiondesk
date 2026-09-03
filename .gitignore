@@ -34,5 +34,10 @@ next-env.d.ts
 
 # student data — real roster, never commit (use seed.roster.example.ts as the template)
 /prisma/seed.roster.ts
+
+# eval run output — scripts/eval-generation.ts and scripts/eval-solver.ts write here.
+# Committed fixtures (scripts/eval-fixtures/) are synthetic and safe to commit; run
+# output is not (may capture real generated problems).
+/runs
 .vercel
 .env*

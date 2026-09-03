@@ -11,7 +11,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 
-export type Stage = "plan" | "seed-sketch" | "generation" | "verification" | "expansion";
+export type Stage = "plan" | "seed-sketch" | "generation" | "verification" | "expansion" | "solve";
 
 type StageTotals = {
   input: number;
@@ -48,13 +48,41 @@ export class UsageAccountant {
     this.byStage.set(stage, t);
   }
 
+  // Read-only access to the per-stage totals for genMeta persistence (Eng C1: the
+  // class used to expose only summaryLine(), a string — a log line, not data. This
+  // is additive; summaryLine's behavior is unchanged.) `provider` is threaded in
+  // by the caller per stage since UsageAccountant itself doesn't know which vendor
+  // made a given call (today, always "anthropic" — see gen-meta.ts's provider field).
+  totals(stage: Stage): StageTotals | undefined {
+    return this.byStage.get(stage);
+  }
+
+  // StageTotals field names (input/cacheWrite/cacheRead/output/thinking) don't
+  // match GenMeta's StageUsage names (inputTokens/cacheWriteTokens/...) — this is
+  // the one place that mapping happens, so callers building a StageUsage (route.ts,
+  // problems.ts) don't each re-derive it.
+  asStageUsage(stage: Stage, provider: string, model: string): import("@/lib/generation/gen-meta").StageUsage | null {
+    const t = this.byStage.get(stage);
+    if (!t) return null;
+    return {
+      provider,
+      model,
+      calls: t.calls,
+      inputTokens: t.input,
+      outputTokens: t.output,
+      thinkingTokens: t.thinking,
+      cacheWriteTokens: t.cacheWrite,
+      cacheReadTokens: t.cacheRead,
+    };
+  }
+
   // One log line per request. The headline metric is `gen-out/problem` — the generation
   // stage's OUTPUT tokens ÷ problems returned. On Sonnet 4.6 `thinking_tokens` reports 0
   // (the reasoning is billed inside output_tokens but not broken out), so `think/problem`
   // reads 0 and hides the real spend; generation output-per-problem is the honest cost
   // signal — the metric that tracks the heavy-reasoning regression the adapt staging targets.
   summaryLine(meta: { tier: string; count: number }): string {
-    const order: Stage[] = ["plan", "seed-sketch", "generation", "verification", "expansion"];
+    const order: Stage[] = ["plan", "seed-sketch", "generation", "verification", "expansion", "solve"];
     let totalThinking = 0;
     const parts: string[] = [];
     for (const stage of order) {

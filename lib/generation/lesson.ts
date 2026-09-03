@@ -10,6 +10,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Lesson } from "@/lib/types";
 import type { GenerationPlan } from "@/lib/generation/plan";
+import { callGeminiWithRetry, geminiClient } from "@/lib/generation/gemini-call";
+import { providerForStage, geminiModelFor } from "@/lib/generation/config";
 
 export type LessonInput = {
   profile: string; // the student's free-text profile (subject + level + goals)
@@ -158,6 +160,24 @@ export async function generateLesson(opts: {
   );
 
   try {
+    if (providerForStage("lesson") === "gemini") {
+      const lesson = await callGeminiWithRetry(
+        geminiClient(),
+        geminiModelFor("lesson"),
+        system,
+        user,
+        {
+          functionName: "emit_lesson",
+          functionDescription: LESSON_TOOL.description ?? "",
+          parametersJsonSchema: LESSON_TOOL.input_schema,
+          maxOutputTokens: 16000,
+          thinkingLevel: "low",
+        },
+        validateLesson,
+        recordUsage
+      );
+      return { ok: true, lesson };
+    }
     // Thinking off + forced tool + non-streaming: a single structured lesson is
     // well within one call's budget, and forcing the tool guarantees it fires.
     const message = (await client.messages.create({
@@ -175,7 +195,16 @@ export async function generateLesson(opts: {
     if (!toolUse) return { ok: false, error: "Generation failed — try again." };
     return { ok: true, lesson: validateLesson(toolUse.input) };
   } catch (e) {
-    console.error("[/api/generate-lesson] generation failed:", e instanceof Error ? e.message : e);
-    return { ok: false, error: "Generation failed — try again." };
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[/api/generate-lesson] generation failed:", msg);
+    return {
+      ok: false,
+      error:
+        msg === "truncated"
+          ? "Lesson was too long — try a narrower topic."
+          : msg === "filtered"
+            ? "Lesson generation was blocked by a content filter — try a different topic or try again."
+            : "Generation failed — try again.",
+    };
   }
 }

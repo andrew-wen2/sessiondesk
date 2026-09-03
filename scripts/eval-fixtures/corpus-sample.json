@@ -1,0 +1,422 @@
+[
+  {
+    "id": "1363ac1e878ff4cecfcf0d25",
+    "source": "AIME",
+    "number": 11,
+    "statement": "Find the least positive integer $n$ such that when $3^n$ is written in base $143$ , its two right-most digits in base $143$ are $01$ .",
+    "answer": "195"
+  },
+  {
+    "id": "a1c5c33757816477f4ec79b8",
+    "source": "AIME",
+    "number": 2,
+    "statement": "Teams $T_1$ , $T_2$ , $T_3$ , and $T_4$ are in the playoffs. In the semifinal matches, $T_1$ plays $T_4$ , and $T_2$ plays $T_3$ . The winners of those two matches will play each other in the final match to determine the champion. When $T_i$ plays $T_j$ , the probability that $T_i$ wins is $\\frac{i}{i+j}$ , and the outcomes of all the matches are independent. The probability that $T_4$ will be the champion is $\\frac{p}{q}$ , where $p$ and $q$ are relatively prime positive integers. Find $p+q$ .",
+    "answer": "781"
+  },
+  {
+    "id": "f7b19e0ee824de36bcc27460",
+    "source": "AIME",
+    "number": 7,
+    "statement": "Find the number of positive integers $m$ for which there exist nonnegative integers $x_0$ , $x_1$ , $\\dots$ , $x_{2011}$ such that \\[m^{x_0} = \\sum_{k = 1}^{2011} m^{x_k}.\\]",
+    "answer": "16"
+  },
+  {
+    "id": "60f314db3d9ea543ac96df48",
+    "source": "AIME",
+    "number": 1,
+    "statement": "Fifteen distinct points are designated on $\\triangle ABC$ : the 3 vertices $A$ , $B$ , and $C$ ; $3$ other points on side $\\overline{AB}$ ; $4$ other points on side $\\overline{BC}$ ; and $5$ other points on side $\\overline{CA}$ . Find the number of triangles with positive area whose vertices are among these $15$ points.",
+    "answer": "390"
+  },
+  {
+    "id": "e8bd105be6b7976abcd56416",
+    "source": "AIME",
+    "number": 13,
+    "statement": "For each integer $n\\geq3$ , let $f(n)$ be the number of $3$ -element subsets of the vertices of a regular $n$ -gon that are the vertices of an isosceles triangle (including equilateral triangles). Find the sum of all values of $n$ such that $f(n+1)=f(n)+78$ .",
+    "answer": "245"
+  },
+  {
+    "id": "95402819324665c6dd267577",
+    "source": "AIME",
+    "number": 5,
+    "statement": "For each positive integer $n$ , let $f(n)$ be the sum of the digits in the base-four representation of $n$ and let $g(n)$ be the sum of the digits in the base-eight representation of $f(n)$ . For example, $f(2020) = f(133210_{\\text{4}}) = 10 = 12_{\\text{8}}$ , and $g(2020) = \\text{the digit sum of }12_{\\text{8}} = 3$ . Let $N$ be the least value of $n$ such that the base-sixteen representation of $g(n)$ cannot be expressed using only the digits $0$ through $9$ . Find the remainder when $N$ is divided by $1000$ .",
+    "answer": "151"
+  },
+  {
+    "id": "a3c4a21380ff08e1079c1acf",
+    "source": "AIME",
+    "number": 8,
+    "statement": "Find the number of sets $\\{a,b,c\\}$ of three distinct positive integers with the property that the product of $a,b,$ and $c$ is equal to the product of $11,21,31,41,51,$ and $61$ .",
+    "answer": "728"
+  },
+  {
+    "id": "70780661845a7ca7a4a99b0c",
+    "source": "AIME",
+    "number": 1,
+    "statement": "Jar $A$ contains four liters of a solution that is $45\\%$ acid. Jar $B$ contains five liters of a solution that is $48\\%$ acid. Jar $C$ contains one liter of a solution that is $k\\%$ acid. From jar $C$ , $\\frac{m}{n}$ liters of the solution is added to jar $A$ , and the remainder of the solution in jar $C$ is added to jar B. At the end both jar $A$ and jar $B$ contain solutions that are $50\\%$ acid. Given that $m$ and $n$ are relatively prime positive integers, find $k + m + n$ .",
+    "answer": "85"
+  },
+  {
+    "id": "fcece79523e6c1728c165040",
+    "source": "AIME",
+    "number": 13,
+    "statement": "Three concentric circles have radii $3,$ $4,$ and $5.$ An equilateral triangle with one vertex on each circle has side length $s.$ The largest possible area of the triangle can be written as $a + \\tfrac{b}{c} \\sqrt{d},$ where $a,$ $b,$ $c,$ and $d$ are positive integers, $b$ and $c$ are relatively prime, and $d$ is not divisible by the square of any prime. Find $a+b+c+d.$",
+    "answer": "41"
+  },
+  {
+    "id": "f86e9b6ff610ee7abfc0ba3c",
+    "source": "AIME",
+    "number": 13,
+    "statement": "Beatrix is going to place six rooks on a $6 \\times 6$ chessboard where both the rows and columns are labeled $1$ to $6$ ; the rooks are placed so that no two rooks are in the same row or the same column. The value of a square is the sum of its row number and column number. The score of an arrangement of rooks is the least value of any occupied square. The average score over all valid configurations is $\\frac{p}{q}$ , where $p$ and $q$ are relatively prime positive integers. Find $p+q$ .",
+    "answer": "371"
+  },
+  {
+    "id": "2285e526c3512ad2a0df2520",
+    "source": "AIME",
+    "number": 5,
+    "statement": "In a drawer Sandy has $5$ pairs of socks, each pair a different color.  On Monday, Sandy selects two individual socks at random from the $10$ socks in the drawer.  On Tuesday Sandy selects $2$ of the remaining $8$ socks at random, and on Wednesday two of the remaining $6$ socks at random.  The probability that Wednesday is the first day Sandy selects matching socks is $\\frac{m}{n}$ , where $m$ and $n$ are relatively prime positive integers. Find $m+n$ .",
+    "answer": "341"
+  },
+  {
+    "id": "58e1e2e7398e6ba2167ccf9d",
+    "source": "AIME",
+    "number": 4,
+    "statement": "In the Cartesian plane let $A = (1,0)$ and $B = \\left( 2, 2\\sqrt{3} \\right)$ .  Equilateral triangle $ABC$ is constructed so that $C$ lies in the first quadrant.  Let $P=(x,y)$ be the center of $\\triangle ABC$ .  Then $x \\cdot y$ can be written as $\\tfrac{p\\sqrt{q}}{r}$ , where $p$ and $r$ are relatively prime positive integers and $q$ is an integer that is not divisible by the square of any prime.  Find $p+q+r$ .",
+    "answer": "40"
+  },
+  {
+    "id": "93ec685c418a0da1a7f245b1",
+    "source": "AIME",
+    "number": 8,
+    "statement": "An ant makes a sequence of moves on a cube where a move consists of walking from one vertex to an adjacent vertex along an edge of the cube. Initially the ant is at a vertex of the bottom face of the cube and chooses one of the three adjacent vertices to move to as its first move. For all moves after the first move, the ant does not return to its previous vertex, but chooses to move to one of the other two adjacent vertices. All choices are selected at random so that each of the possible moves is equally likely. The probability that after exactly $8$ moves that ant is at a vertex of the top face on the cube is $\\frac{m}{n}$ , where $m$ and $n$ are relatively prime positive integers. Find $m + n.$",
+    "answer": "49"
+  },
+  {
+    "id": "49e600efdceecd5de2a13ae2",
+    "source": "AIME",
+    "number": 6,
+    "statement": "Define an ordered quadruple of integers $(a, b, c, d)$ as interesting if $1 \\le a<b<c<d \\le 10$ , and $a+d>b+c$ . How many interesting ordered quadruples are there?",
+    "answer": "80"
+  },
+  {
+    "id": "21b4a97b80cf7406a27d1ea5",
+    "source": "AIME",
+    "number": 4,
+    "statement": "Jon and Steve ride their bicycles along a path that parallels two side-by-side train tracks running the east/west direction. Jon rides east at $20$ miles per hour, and Steve rides west at $20$ miles per hour. Two trains of equal length, traveling in opposite directions at constant but different speeds each pass the two riders. Each train takes exactly $1$ minute to go past Jon. The westbound train takes $10$ times as long as the eastbound train to go past Steve. The length of each train is $\\tfrac{m}{n}$ miles, where $m$ and $n$ are relatively prime positive integers. Find $m+n$ .",
+    "answer": "49"
+  },
+  {
+    "id": "85862a30629f106a7273974e",
+    "source": "AIME",
+    "number": 15,
+    "statement": "Circles $\\mathcal{P}$ and $\\mathcal{Q}$ have radii $1$ and $4$ , respectively, and are externally tangent at point $A$ . Point $B$ is on $\\mathcal{P}$ and point $C$ is on $\\mathcal{Q}$ such that $BC$ is a common external tangent of the two circles. A line $\\ell$ through $A$ intersects $\\mathcal{P}$ again at $D$ and intersects $\\mathcal{Q}$ again at $E$ . Points $B$ and $C$ lie on the same side of $\\ell$ , and the areas of $\\triangle DBA$ and $\\triangle ACE$ are equal. This common area is $\\frac{m}{n}$ , where $m$ and $n$ are relatively prime positive integers. Find $m+n$ . [asy] import cse5; pathpen=black; pointpen=black; size(6cm);  pair E = IP(L((-.2476,1.9689),(0.8,1.6),-3,5.5),CR((4,4),4)), D = (-.2476,1.9689);  filldraw(D--(0.8,1.6)--(0,0)--cycle,gray(0.7)); filldraw(E--(0.8,1.6)--(4,0)--cycle,gray(0.7)); D(CR((0,1),1)); D(CR((4,4),4,150,390)); D(L(MP(\"D\",D(D),N),MP(\"A\",D((0.8,1.6)),NE),1,5.5)); D((-1.2,0)--MP(\"B\",D((0,0)),S)--MP(\"C\",D((4,0)),S)--(8,0)); D(MP(\"E\",E,N)); [/asy]",
+    "answer": "129"
+  },
+  {
+    "id": "3998904463b1b54b66c1e2c2",
+    "source": "AIME",
+    "number": 15,
+    "statement": "Let $P(x) = x^2 - 3x - 9$ . A real number $x$ is chosen at random from the interval $5 \\le x \\le 15$ . The probability that $\\left\\lfloor\\sqrt{P(x)}\\right\\rfloor = \\sqrt{P(\\lfloor x \\rfloor)}$ is equal to $\\frac{\\sqrt{a} + \\sqrt{b} + \\sqrt{c} - d}{e}$ , where $a$ , $b$ , $c$ , $d$ , and $e$ are positive integers. Find $a + b + c + d + e$ .",
+    "answer": "850"
+  },
+  {
+    "id": "21a5f20506b2b56c13ac6cfb",
+    "source": "AIME",
+    "number": 10,
+    "statement": "Three spheres with radii $11,$ $13,$ and $19$ are mutually externally tangent. A plane intersects the spheres in three congruent circles centered at $A,$ $B,$ and $C,$ respectively, and the centers of the spheres all lie on the same side of this plane. Suppose that $AB^2 = 560.$ Find $AC^2.$",
+    "answer": "756"
+  },
+  {
+    "id": "21bfa5043ddfec73b854d06e",
+    "source": "AIME",
+    "number": 6,
+    "statement": "For polynomial $P(x)=1-\\dfrac{1}{3}x+\\dfrac{1}{6}x^{2}$ , define $Q(x)=P(x)P(x^{3})P(x^{5})P(x^{7})P(x^{9})=\\sum_{i=0}^{50} a_ix^{i}$ .\nThen $\\sum_{i=0}^{50} |a_i|=\\dfrac{m}{n}$ , where $m$ and $n$ are relatively prime positive integers. Find $m+n$ .",
+    "answer": "275"
+  },
+  {
+    "id": "234d15bffdc2342c2b660c7b",
+    "source": "AIME",
+    "number": 13,
+    "statement": "Circles $\\omega_1$ and $\\omega_2$ with radii $961$ and $625$ , respectively, intersect at distinct points $A$ and $B$ . A third circle $\\omega$ is externally tangent to both $\\omega_1$ and $\\omega_2$ . Suppose line $AB$ intersects $\\omega$ at two points $P$ and $Q$ such that the measure of minor arc $\\widehat{PQ}$ is $120^{\\circ}$ . Find the distance between the centers of $\\omega_1$ and $\\omega_2$ .",
+    "answer": "672"
+  },
+  {
+    "id": "4f89f48d16bf0c914ac556e0",
+    "source": "AMC10",
+    "number": 9,
+    "statement": "$\\text{palindrome}$ , such as $83438$ , is a number that remains the same when its digits are reversed. The numbers $x$ and $x+32$ are three-digit and four-digit palindromes, respectively. What is the sum of the digits of $x$",
+    "answer": "24"
+  },
+  {
+    "id": "58aa1fcfdae736355920835f",
+    "source": "AMC10",
+    "number": 15,
+    "statement": "Roy bought a new battery-gasoline hybrid car. On a trip the car ran exclusively on its battery for the first $40$ miles, then ran exclusively on gasoline for the rest of the trip, using gasoline at a rate of $0.02$ gallons per mile. On the whole trip he averaged $55$ miles per gallon. How long was the trip in miles?",
+    "answer": "440"
+  },
+  {
+    "id": "a8c4b24def4e6008f2ff900e",
+    "source": "AMC10",
+    "number": 15,
+    "statement": "A positive integer divisor of $12!$ is chosen at random. The probability that the divisor chosen is a perfect square can be expressed as $\\frac{m}{n}$ , where $m$ and $n$ are relatively prime positive integers. What is $m+n$",
+    "answer": "23"
+  },
+  {
+    "id": "1c049f8a69b5d7ea315a9bc7",
+    "source": "AMC10",
+    "number": 20,
+    "statement": "Four congruent semicircles are drawn on the surface of a sphere with radius $2$ , as\nshown, creating a close curve that divides the surface into two congruent regions.\nThe length of the curve is $\\pi\\sqrt{n}$ . What is $n$",
+    "answer": "32"
+  },
+  {
+    "id": "714b4579dbcc32ca11a1dfa8",
+    "source": "AMC10",
+    "number": 11,
+    "statement": "For the consumer, a single discount of $n\\%$ is more advantageous than any of the following discounts:\n(1) two successive $15\\%$ discounts\n(2) three successive $10\\%$ discounts\n(3) a $25\\%$ discount followed by a $5\\%$ discount\nWhat is the smallest possible positive integer value of $n$",
+    "answer": "29"
+  },
+  {
+    "id": "baead8486d7ea7c2f21f3e15",
+    "source": "AMC10",
+    "number": 3,
+    "statement": "Tyrone had $97$ marbles and Eric had $11$ marbles. Tyrone then gave some of his marbles to Eric so that Tyrone ended with twice as many marbles as Eric. How many marbles did Tyrone give to Eric?",
+    "answer": "25"
+  },
+  {
+    "id": "44a0e531bbbc58782ab546f9",
+    "source": "AMC10",
+    "number": 25,
+    "statement": "A rectangular box measures $a \\times b \\times c$ , where $a$ $b$ , and $c$ are integers and $1\\leq a \\leq b \\leq c$ . The volume and the surface area of the box are numerically equal. How many ordered triples $(a,b,c)$ are possible?",
+    "answer": "10"
+  },
+  {
+    "id": "f30889880950222e8544cce0",
+    "source": "AMC10",
+    "number": 3,
+    "statement": "The sum of three numbers is $96.$ The first number is $6$ times the third number, and the third number is $40$ less than the second number. What is the absolute value of the difference between the first and second numbers?",
+    "answer": "5"
+  },
+  {
+    "id": "ff3ce9e1b14af47e8668e4ba",
+    "source": "AMC10",
+    "number": 5,
+    "statement": "Last year 100 adult cats, half of whom were female, were brought into the Smallville Animal Shelter. Half of the adult female cats were accompanied by a litter of kittens. The average number of kittens per litter was 4. What was the total number of cats and kittens received by the shelter last year?",
+    "answer": "200"
+  },
+  {
+    "id": "7a6e522c4cd9046785bd0ef6",
+    "source": "AMC10",
+    "number": 7,
+    "statement": "Each piece of candy in a store costs a whole number of cents. Casper has exactly enough money to buy either $12$ pieces of red candy, $14$ pieces of green candy, $15$ pieces of blue candy, or $n$ pieces of purple candy. A piece of purple candy costs $20$ cents. What is the smallest possible value of $n$",
+    "answer": "21"
+  },
+  {
+    "id": "80f0c0edb9544e328cf6eba2",
+    "source": "AMC10",
+    "number": 9,
+    "statement": "The point $P(a,b)$ in the $xy$ -plane is first rotated counterclockwise by $90^\\circ$ around the point $(1,5)$ and then reflected about the line $y = -x$ . The image of $P$ after these two transformations is at $(-6,3)$ . What is $b - a ?$",
+    "answer": "7"
+  },
+  {
+    "id": "5edb49aba6afd7d527836a93",
+    "source": "AMC10",
+    "number": 13,
+    "statement": "How many even integers are there between $200$ and $700$ whose digits are all different and come from the set $\\left\\{1,2,5,7,8,9\\right\\}$",
+    "answer": "12"
+  },
+  {
+    "id": "c25800f935998632b50b501d",
+    "source": "AMC10",
+    "number": 5,
+    "statement": "What is the greatest number of consecutive integers whose sum is $45?$",
+    "answer": "90"
+  },
+  {
+    "id": "cf356b8011e1f38b04a6d8dc",
+    "source": "AMC10",
+    "number": 19,
+    "statement": "The area of the region bounded by the graph of \\[x^2+y^2 = 3|x-y| + 3|x+y|\\] is $m+n\\pi$ , where $m$ and $n$ are integers. What is $m + n$",
+    "answer": "54"
+  },
+  {
+    "id": "a60fe9e5dd23224341a70d4c",
+    "source": "AMC10",
+    "number": 25,
+    "statement": "How many ordered triples $(x,y,z)$ of positive integers satisfy $\\text{lcm}(x,y) = 72, \\text{lcm}(x,z) = 600 \\text{ and lcm}(y,z)=900$",
+    "answer": "15"
+  },
+  {
+    "id": "f78905291952faa9b8299c0e",
+    "source": "AMC10",
+    "number": 9,
+    "statement": "The numbers $16$ and $25$ are a pair of consecutive positive squares whose difference is $9$ . How many pairs of consecutive positive perfect squares have a difference of less than or equal to $2023$",
+    "answer": "1011"
+  },
+  {
+    "id": "ccba622108c9464f8b7891fa",
+    "source": "AMC10",
+    "number": 19,
+    "statement": "The line segment formed by $A(1, 2)$ and $B(3, 3)$ is rotated to the line segment formed by $A'(3, 1)$ and $B'(4, 3)$ about the point $P(r, s)$ . What is $|r-s|$",
+    "answer": "1"
+  },
+  {
+    "id": "88446eebe874e95c218aee26",
+    "source": "AMC10",
+    "number": 10,
+    "statement": "A flower bouquet contains pink roses, red roses, pink carnations, and red carnations.  One third of the pink flowers are roses, three fourths of the red flowers are carnations, and six tenths of the flowers are pink.  What percent of the flowers are carnations?",
+    "answer": "70"
+  },
+  {
+    "id": "c06dead9bd5230b5ab1eb1a3",
+    "source": "AMC10",
+    "number": 21,
+    "statement": "Mary chose an even $4$ -digit number $n$ . She wrote down all the divisors of $n$ in increasing order from left to right: $1,2,\\ldots,\\dfrac{n}{2},n$ . At some moment Mary wrote $323$ as a divisor of $n$ . What is the smallest possible value of the next divisor written to the right of $323$",
+    "answer": "340"
+  },
+  {
+    "id": "6c3842064404812872a95088",
+    "source": "AMC10",
+    "number": 20,
+    "statement": "The number $2013$ is expressed in the form\nwhere $a_1 \\ge a_2 \\ge \\cdots \\ge a_m$ and $b_1 \\ge b_2 \\ge \\cdots \\ge b_n$ are positive integers and $a_1 + b_1$ is as small as possible. What is $|a_1 - b_1|$",
+    "answer": "2"
+  },
+  {
+    "id": "0e7a1d633c3f518e4383e1ed",
+    "source": "AMC12",
+    "number": 19,
+    "statement": "Suppose that $13$ cards numbered $1, 2, 3, \\ldots, 13$ are arranged in a row. The task is to pick them up in numerically increasing order, working repeatedly from left to right. In the example below, cards $1, 2, 3$ are picked up on the first pass, $4$ and $5$ on the second pass, $6$ on the third pass, $7, 8, 9, 10$ on the fourth pass, and $11, 12, 13$ on the fifth pass. For how many of the $13!$ possible orderings of the cards will the $13$ cards be picked up in exactly two passes?",
+    "answer": "8178"
+  },
+  {
+    "id": "e07ae5a5a535f2dc83e6a760",
+    "source": "AMC12",
+    "number": 21,
+    "statement": "For every real number $x$ , let $\\lfloor x\\rfloor$ denote the greatest integer not exceeding $x$ , and let \\[f(x)=\\lfloor x\\rfloor(2014^{x-\\lfloor x\\rfloor}-1).\\] The set of all numbers $x$ such that $1\\leq x<2014$ and $f(x)\\leq 1$ is a union of disjoint intervals.  What is the sum of the lengths of those intervals?",
+    "answer": "1"
+  },
+  {
+    "id": "95d0ed94416a792c545effbe",
+    "source": "AMC12",
+    "number": 25,
+    "statement": "For every integer $n\\ge2$ , let $\\text{pow}(n)$ be the largest power of the largest prime that divides $n$ . For example $\\text{pow}(144)=\\text{pow}(2^4\\cdot3^2)=3^2$ . What is the largest integer $m$ such that $2010^m$ divides",
+    "answer": "77"
+  },
+  {
+    "id": "202778ad7165d68bee223b49",
+    "source": "AMC12",
+    "number": 6,
+    "statement": "In a recent basketball game, Shenille attempted only three-point shots and two-point shots. She was successful on $20\\%$ of her three-point shots and $30\\%$ of her two-point shots. Shenille attempted $30$ shots. How many points did she score?",
+    "answer": "18"
+  },
+  {
+    "id": "4004969ae60209e5ae2655e0",
+    "source": "AMC12",
+    "number": 19,
+    "statement": "Jerry starts at $0$ on the real number line. He tosses a fair coin $8$ times. When he gets heads, he moves $1$ unit in the positive direction; when he gets tails, he moves $1$ unit in the negative direction. The probability that he reaches $4$ at some time during this process $\\frac{a}{b},$ where $a$ and $b$ are relatively prime positive integers. What is $a + b?$ (For example, he succeeds if his sequence of tosses is $HTHHHHHH.$",
+    "answer": "151"
+  },
+  {
+    "id": "1c993168fb3ef9ca33718ca8",
+    "source": "AMC12",
+    "number": 11,
+    "statement": "On a sheet of paper, Isabella draws a circle of radius $2$ , a circle of radius $3$ , and all possible lines simultaneously tangent to both circles. Isabella notices that she has drawn exactly $k \\ge  0$ lines. How many different values of $k$ are possible?",
+    "answer": "5"
+  },
+  {
+    "id": "45fe66f3250215544d873b18",
+    "source": "AMC12",
+    "number": 11,
+    "statement": "What is the product of all real numbers $x$ such that the distance on the number line between $\\log_6x$ and $\\log_69$ is twice the distance on the number line between $\\log_610$ and $1$?",
+    "answer": "81"
+  },
+  {
+    "id": "aee3e158d982c7c5afce63de",
+    "source": "AMC12",
+    "number": 5,
+    "statement": "The $\\textit{taxicab distance}$ between points $(x_1, y_1)$ and $(x_2, y_2)$ in the coordinate plane is given by \\[|x_1 - x_2| + |y_1 - y_2|.\\]\nFor how many points $P$ with integer coordinates is the taxicab distance between $P$ and the origin less than or equal to $20$?",
+    "answer": "841"
+  },
+  {
+    "id": "39eeb4c39c1315eecbbccdcf",
+    "source": "AMC12",
+    "number": 10,
+    "statement": "A quadrilateral has vertices $P(a,b)$ $Q(b,a)$ $R(-a, -b)$ , and $S(-b, -a)$ , where $a$ and $b$ are integers with $a>b>0$ . The area of $PQRS$ is $16$ . What is $a+b$",
+    "answer": "4"
+  },
+  {
+    "id": "dbe16df7cd8bb551e62fd0fc",
+    "source": "AMC12",
+    "number": 1,
+    "statement": "Carlos took $70\\%$ of a whole pie. Maria took one third of the remainder. What portion of the whole pie was left?",
+    "answer": "20"
+  },
+  {
+    "id": "43b12116774ad2a8a40f7824",
+    "source": "AMC12",
+    "number": 11,
+    "statement": "What is the product of all real numbers $x$ such that the distance on the number line between $\\log_6x$ and $\\log_69$ is twice the distance on the number line between $\\log_610$ and $1$",
+    "answer": "81"
+  },
+  {
+    "id": "9bc6e0163ab6228af6986b59",
+    "source": "AMC12",
+    "number": 4,
+    "statement": "The least common multiple of a positive integer $n$ and $18$ is $180$, and the greatest common divisor of $n$ and $45$ is $15$. What is the sum of the digits of $n$?",
+    "answer": "6"
+  },
+  {
+    "id": "4ab4e157b131123d0e3c63ea",
+    "source": "AMC12",
+    "number": 10,
+    "statement": "How many ways are there to split the integers $1$ through $14$ into $7$ pairs such that in each pair, the greater number is at least $2$ times the lesser number?",
+    "answer": "144"
+  },
+  {
+    "id": "3cac174f648993f9937b1bf4",
+    "source": "AMC12",
+    "number": 15,
+    "statement": "What is the minimum number of digits to the right of the decimal point needed to express the fraction $\\frac{123456789}{2^{26}\\cdot 5^4}$ as a decimal?",
+    "answer": "26"
+  },
+  {
+    "id": "543a8ce5f49eb2521421db6d",
+    "source": "AMC12",
+    "number": 6,
+    "statement": "A data set consists of $6$ (not distinct) positive integers: $1$, $7$, $5$, $2$, $5$, and $X$. The average (arithmetic mean) of the $6$ numbers equals a value in the data set. What is the sum of all possible values of $X$?",
+    "answer": "36"
+  },
+  {
+    "id": "26cee8265f4905f39387916f",
+    "source": "AMC12",
+    "number": 2,
+    "statement": "The harmonic mean of two numbers can be calculated as twice their product divided by their sum. The harmonic mean of $1$ and $2016$ is closest to which integer?",
+    "answer": "2"
+  },
+  {
+    "id": "37d82a9170a56b7b6c709bbd",
+    "source": "AMC12",
+    "number": 15,
+    "statement": "How many odd positive $3$ -digit integers are divisible by $3$ but do not contain the digit $3$",
+    "answer": "96"
+  },
+  {
+    "id": "8a5a84c3e6774ac1a524b205",
+    "source": "AMC12",
+    "number": 21,
+    "statement": "The five solutions to the equation \\[(z-1)(z^2+2z+4)(z^2+4z+6)=0\\] may be written in the form $x_k+y_ki$ for $1\\le k\\le 5,$ where $x_k$ and $y_k$ are real. Let $\\mathcal E$ be the unique ellipse that passes through the points $(x_1,y_1),(x_2,y_2),(x_3,y_3),(x_4,y_4),$ and $(x_5,y_5)$ . The eccentricity of $\\mathcal E$ can be written in the form $\\sqrt{\\frac mn}$ , where $m$ and $n$ are relatively prime positive integers. What is $m+n$ ? (Recall that the eccentricity of an ellipse $\\mathcal E$ is the ratio $\\frac ca$ , where $2a$ is the length of the major axis of $\\mathcal E$ and $2c$ is the is the distance between its two foci.)",
+    "answer": "7"
+  },
+  {
+    "id": "d609b99c6b7dd07b08bf8cf8",
+    "source": "AMC12",
+    "number": 17,
+    "statement": "There are $24$ different complex numbers $z$ such that $z^{24}=1$ . For how many of these is $z^6$ a real number?",
+    "answer": "12"
+  },
+  {
+    "id": "8f2cfd2b4c1c50e3fde0cda6",
+    "source": "AMC12",
+    "number": 8,
+    "statement": "Let $f(x) = x^{2}(1-x)^{2}$ . What is the value of the sum \\[f \\left(\\frac{1}{2019} \\right)-f  \\left(\\frac{2}{2019} \\right)+f \\left(\\frac{3}{2019} \\right)-f \\left(\\frac{4}{2019} \\right)+\\cdots + f \\left(\\frac{2017}{2019} \\right) - f \\left(\\frac{2018}{2019} \\right)?\\]",
+    "answer": "0"
+  }
+]

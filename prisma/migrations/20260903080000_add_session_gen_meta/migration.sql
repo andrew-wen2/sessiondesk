@@ -1,0 +1,15 @@
+-- Per-generation provenance: which provider/model produced each stage, per-item
+-- verification verdicts, per-stage token counts, and drop reasons. Additive column,
+-- backward compatible (see CLAUDE.md's migration-order note) — every existing row
+-- reads NULL, which readers must treat as "unknown provenance", not "zero cost".
+--
+-- Written from app/api/generate/route.ts AND app/api/generate-lesson/route.ts (both
+-- update the same Session row), so the shape is keyed by producer: {v, problems, lesson}.
+-- Written on failure too, with whatever usage/drop-reason data was accumulated before
+-- the failure, so a bad run still leaves a join key to how it was attempted.
+--
+-- Deliberately kept Json rather than a new table: it is 1:1 with a row already being
+-- written, additive, and Session is already user-owned (scoping + cascade-delete come
+-- free). Readable BY SESSION ID ONLY — a Json column can't be filtered without
+-- queryRaw, which this repo's conventions forbid, so don't plan analytics on it.
+ALTER TABLE "Session" ADD COLUMN "genMeta" JSONB;

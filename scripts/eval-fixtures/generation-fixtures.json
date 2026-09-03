@@ -1,0 +1,92 @@
+[
+  {
+    "id": "aime-hard-1",
+    "profile": "AIME, focused on problems 10-15 — struggles with casework under time pressure",
+    "topic": "number theory and modular arithmetic",
+    "recentTopics": ["AIME combinatorics warmup", "AIME geometry #12-14"]
+  },
+  {
+    "id": "aime-hard-2",
+    "profile": "AIME level, problems 11-15, strong algebra but weak on combinatorics",
+    "topic": "combinatorics — counting with constraints",
+    "recentTopics": []
+  },
+  {
+    "id": "aime-mid-1",
+    "profile": "AIME, problems 1-9, building confidence with fill-in-the-blank format",
+    "topic": "algebra — sequences and series",
+    "recentTopics": ["AIME #1-5 warmup"]
+  },
+  {
+    "id": "amc-hard-1",
+    "profile": "AMC 12, problems 18-25, aiming for AIME qualification",
+    "topic": "geometry — circles and triangles",
+    "recentTopics": ["AMC 12 #15-20 practice"]
+  },
+  {
+    "id": "amc-hard-2",
+    "profile": "AMC 10, last 5 problems, needs multi-step reasoning practice",
+    "topic": "combinatorics and probability",
+    "recentTopics": []
+  },
+  {
+    "id": "amc-easy-1",
+    "profile": "AMC 10, first 15 problems, still learning core techniques",
+    "topic": "algebra — linear and quadratic equations",
+    "recentTopics": ["basic factoring"]
+  },
+  {
+    "id": "fma-hard-1",
+    "profile": "F=ma exam prep, later problems (18-25), mechanics and rotation",
+    "topic": "rotational dynamics and torque",
+    "recentTopics": ["F=ma energy and momentum"]
+  },
+  {
+    "id": "noncontest-mid-1",
+    "profile": "AP Biology, advanced student preparing for the exam, strong on molecular but weak on ecology",
+    "topic": "population ecology and carrying capacity",
+    "recentTopics": ["cellular respiration", "photosynthesis review"]
+  },
+  {
+    "id": "noncontest-mid-2",
+    "profile": "AP Chemistry, college-level pace, needs practice with equilibrium problems",
+    "topic": "acid-base equilibrium and buffers",
+    "recentTopics": ["stoichiometry review"]
+  },
+  {
+    "id": "noncontest-mid-3",
+    "profile": "Precalculus, honors track, comfortable with functions but shaky on trig identities",
+    "topic": "trigonometric identities and equations",
+    "recentTopics": ["unit circle review"]
+  },
+  {
+    "id": "noncontest-easy-1",
+    "profile": "Algebra 2, on-level, struggling with quadratics",
+    "topic": "factoring and the quadratic formula",
+    "recentTopics": []
+  },
+  {
+    "id": "noncontest-easy-2",
+    "profile": "Middle school pre-algebra, needs drill-level practice with fractions",
+    "topic": "operations with fractions",
+    "recentTopics": ["decimal review"]
+  },
+  {
+    "id": "spanish-1",
+    "profile": "Spanish II, intermediate, working on verb conjugation and vocabulary",
+    "topic": "preterite vs imperfect tense",
+    "recentTopics": ["regular present-tense conjugation"]
+  },
+  {
+    "id": "spanish-2",
+    "profile": "Spanish I, beginner, building basic vocabulary and sentence structure",
+    "topic": "everyday vocabulary — food and family",
+    "recentTopics": []
+  },
+  {
+    "id": "history-open-1",
+    "profile": "AP US History, advanced, preparing for the DBQ essay format",
+    "topic": "causes of the American Revolution",
+    "recentTopics": ["colonial economics"]
+  }
+]

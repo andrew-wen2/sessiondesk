@@ -21,6 +21,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { calibrationFor, categoryFor, tierFor, type Competition } from "@/lib/calibration";
 import { RUBRICS, buildPlanPrompt } from "@/lib/generation-prompt";
+import { callGeminiWithRetry, geminiClient } from "@/lib/generation/gemini-call";
+import { providerForStage, geminiModelFor } from "@/lib/generation/config";
 
 // Drives rendering hints and which similarity axes apply — a shared integer means
 // something in two math problems and nothing in two Spanish exercises.
@@ -65,8 +67,19 @@ const PLAN_TOOL: Anthropic.Tool = {
       },
       tier: {
         type: "string",
-        enum: ["easy", "mid"],
-        description: "'mid' if the work demands multi-step reasoning or advanced/college-level material, 'easy' for introductory or drill-level practice",
+        // "hard" WAS unreachable here on purpose — it used to mean "the corpus
+        // variant path," which needs real seeds no non-contest student has. Now
+        // that lib/generation/solve.ts verifies every tier's answer independently,
+        // "hard" just means "generate from scratch at the top of this student's
+        // difficulty," and problems.ts falls back to the scratch (non-variant) path
+        // whenever there's no corpus to anchor a variant to. See Eng review: the
+        // real defect was never tierFor (only reached on the corpus fast path) —
+        // it was this enum capping every non-contest student below the tier that
+        // used to gate verification. Verification is no longer tier-gated, but a
+        // non-contest student choosing genuinely hard material should still be able
+        // to say so.
+        enum: ["easy", "mid", "hard"],
+        description: "'hard' for material demanding sustained multi-step reasoning at an advanced/competition-adjacent level, 'mid' for solid multi-step work, 'easy' for introductory or drill-level practice",
       },
       answerFormat: {
         type: "string",
@@ -98,8 +111,16 @@ function fallbackPlan(profile: string, topic: string, source: "model" | "fallbac
     domain: "",
     contentType: "mixed",
     tier: keywordTier(`${profile} ${topic}`),
-    // Nothing was classified, so enforcing a format would drop valid work.
-    answerFormat: "open",
+    // NOT "open" (Eng E5 / Evidence: "plan failure silently disables answer
+    // validation"). answerOkFor auto-passes an EMPTY answer whenever the format is
+    // "open" — so if this ran on every plan failure, one flaky classification call
+    // would turn the answer guard off for the whole set, and for an AIME student
+    // that's a silent downgrade to ungradeable with nothing telling anyone. "open"
+    // is reserved for genuinely-classified open-ended work (an essay prompt); a
+    // FAILURE to classify is not evidence the work has no answer. "short-text"
+    // still imposes no shape beyond "real, non-placeholder, non-empty" — the
+    // correct floor when nothing is known.
+    answerFormat: "short-text",
     rubric: "",
     competition: null,
     bandLow: null,
@@ -147,41 +168,63 @@ export async function planFor(args: {
 
   // --- Model path: one cheap classification + rubric call.
   const { system, user } = buildPlanPrompt({ profile, topic, recentTopics });
-  try {
-    const message = await client.messages.create({
-      model: process.env.GENERATION_MODEL_PLAN ?? "claude-haiku-4-5",
-      max_tokens: 1500,
-      thinking: { type: "disabled" },
-      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-      tools: [PLAN_TOOL],
-      tool_choice: { type: "tool", name: "emit_plan" },
-      messages: [{ role: "user", content: user }],
-    });
-    recordUsage(message.usage);
-    const toolUse = message.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-    const raw = (toolUse?.input ?? {}) as Record<string, unknown>;
-
+  const parseRawPlan = (raw: Record<string, unknown>): GenerationPlan => {
     const str = (k: string): string => (typeof raw[k] === "string" ? (raw[k] as string).trim() : "");
     const oneOf = <T extends string>(k: string, allowed: readonly T[], dflt: T): T => {
       const v = str(k);
       return (allowed as readonly string[]).includes(v) ? (v as T) : dflt;
     };
-
     const base = fallbackPlan(profile, topic, "model");
-    const plan: GenerationPlan = {
+    return {
       ...base,
       domain: str("domain"),
       contentType: oneOf("contentType", ["math", "prose", "code", "mixed"] as const, "mixed"),
-      // The tool only offers easy/mid — "hard" means the corpus variant path, which
-      // needs real seeds and is unreachable without a competition.
-      tier: oneOf("tier", ["easy", "mid"] as const, base.tier),
+      tier: oneOf("tier", ["easy", "mid", "hard"] as const, base.tier),
+      // Falls back to "short-text", not "open" — same reasoning as fallbackPlan: a
+      // malformed/off-enum classification is not evidence the work has no answer.
       answerFormat: oneOf(
         "answerFormat",
         ["integer", "numeric", "expression", "short-text", "open"] as const,
-        "open"
+        "short-text"
       ),
       rubric: str("rubric"),
     };
+  };
+
+  try {
+    let raw: Record<string, unknown>;
+    if (providerForStage("plan") === "gemini") {
+      raw = await callGeminiWithRetry(
+        geminiClient(),
+        geminiModelFor("plan"),
+        system,
+        user,
+        {
+          functionName: "emit_plan",
+          functionDescription: "Return the generation plan for this tutoring session.",
+          parametersJsonSchema: PLAN_TOOL.input_schema,
+          maxOutputTokens: 1500,
+          thinkingLevel: "low",
+        },
+        (r) => r as Record<string, unknown>,
+        recordUsage
+      );
+    } else {
+      const message = await client.messages.create({
+        model: process.env.GENERATION_MODEL_PLAN ?? "claude-haiku-4-5",
+        max_tokens: 1500,
+        thinking: { type: "disabled" },
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+        tools: [PLAN_TOOL],
+        tool_choice: { type: "tool", name: "emit_plan" },
+        messages: [{ role: "user", content: user }],
+      });
+      recordUsage(message.usage);
+      const toolUse = message.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+      raw = (toolUse?.input ?? {}) as Record<string, unknown>;
+    }
+
+    const plan = parseRawPlan(raw);
     console.log(
       `[/api/generate] plan domain="${plan.domain}" contentType=${plan.contentType} tier=${plan.tier} answerFormat=${plan.answerFormat} rubric=${plan.rubric.length}ch`
     );

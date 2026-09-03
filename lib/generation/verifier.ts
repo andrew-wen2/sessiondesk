@@ -9,24 +9,37 @@
 // figure-dependent or cut-off statement. A rejected problem is dropped and
 // refilled by the route's regenerate-the-deficit loop, so these never block
 // generation — they just filter bad items.
+//
+// PLAN-AWARE (rewritten): problemOk / solutionOk / solutionSketchOk now take the
+// plan. They were previously subject-blind — unable to apply a different rule to
+// Spanish than to AIME — which is stale relative to the plan-driven pipeline every
+// other stage already reasons about per-subject.
+//
+// SPLIT: answerOkFor no longer gates the KEEP/DROP decision on the generator's
+// self-reported answer (see lib/generation/problems.ts). It's called post-solve
+// against whichever answer ends up stored — the solver's, when one exists — so a
+// good problem statement is never discarded for a value that was going to be
+// overwritten anyway.
 
-import type { Problem, Anchor } from "@/lib/types";
+import type { Problem } from "@/lib/types";
 import type { GenerationPlan } from "@/lib/generation/plan";
+
+export type GuardPlan = Pick<GenerationPlan, "contentType">;
 
 // --- Answer guard -----------------------------------------------------------
 
 // The model punts with one of these when it couldn't actually solve the problem.
-const PLACEHOLDER_RE =
-  /\b(tbd|tba|todo|n\/?a|hint|see solution|to be determined|placeholder|unknown)\b/i;
+// "unknown" and "hint" were removed here (Eng/DX finding): "let the unknown be $x$"
+// is routine algebra phrasing and "hint" appears in ordinary pedagogical solutions
+// — neither is a placeholder, and both were dropping good problems.
+const PLACEHOLDER_RE = /\b(tbd|tba|todo|n\/?a|see solution|to be determined|placeholder)\b/i;
 
 // One answer guard for every subject, keyed off the plan's answerFormat rather
 // than a stored engine choice. It enforces exactly what the prompt's
 // ANSWER_FORMAT_RULES told the model to produce — keep the two in step.
 //
-// The empty-answer rule is the important one: an empty answer means the model
-// declined to solve its own problem, and is only legitimate for genuinely
-// open-ended work ("open"). The old lenient guard accepted it for every
-// non-competition subject, which is how unsolved problems reached the page.
+// The empty-answer rule is the important one: an empty answer means nothing was
+// solved, and is only legitimate for genuinely open-ended work ("open").
 export function answerOkFor(
   p: Problem,
   plan: Pick<GenerationPlan, "answerFormat" | "competition">
@@ -64,24 +77,32 @@ const META_PATTERNS = [
   /\b(ignore|forget) (the|that|this|everything) (above|prior|previous|earlier)\b/i,
   /\bsee (the )?solution\b/i,
 ];
-// "figure"/"diagram" are never legitimate in a text-only problem. "graph" is
-// excluded — it's a valid math term (graph of a function) and would false-positive.
-const FIGURE_PATTERNS = [
-  /\b(figure|diagram|picture|illustration)\b/i,
+// FIGURE DEPENDENCE — only the phrases that mean "an image was provided and this
+// problem can't be worked without it." The old guard also banned the bare words
+// "figure"/"diagram"/"picture"/"illustration", which is standard vocabulary in AP
+// Biology ("draw a diagram of..."), chemistry, and geometry ("the figure formed by
+// the three midpoints") — that version dropped good problems across exactly the
+// subjects this pipeline was generalized to serve.
+const FIGURE_DEPENDENCE_PATTERNS = [
   /\b(shown|pictured|depicted|illustrated|drawn)\s+(above|below|here|to the (left|right))\b/i,
   /\bas shown\b/i,
 ];
 
 // Reject malformed problem STATEMENTS the prompt tells the model never to emit:
 // self-correction, figure dependence, cut-off statements, and answer-choice lists.
-export function problemOk(p: Problem): boolean {
+export function problemOk(p: Problem, plan: GuardPlan): boolean {
   const text = (p.problem || "").trim();
   if (!text) return false;
   // Cut-off / abandoned statement: ends in an ellipsis (a real problem ends with
   // proper punctuation; "1, 2, ..." mid-statement is fine, a trailing one is not).
   if (/(\.\.\.|…)\s*$/.test(text)) return false;
   if (META_PATTERNS.some((re) => re.test(text))) return false;
-  if (FIGURE_PATTERNS.some((re) => re.test(text))) return false;
+  // Figure-dependence is a real defect for math/mixed content (a geometry diagram,
+  // a physics free-body diagram the student wasn't given). Code problems routinely
+  // embed a self-contained ASCII diagram directly in the statement — "as shown
+  // below" there usually points at text three lines down, not a missing image —
+  // so the check is exempted for contentType "code" to avoid that false positive.
+  if (plan.contentType !== "code" && FIGURE_DEPENDENCE_PATTERNS.some((re) => re.test(text))) return false;
   // Multiple-choice option list — we generate free-response only. Collect the
   // distinct parenthesized letters (also matches \textbf{(A)} etc., which contain
   // "(A)"); 4+ of {A..E} is an answer-choice list, not incidental labeling.
@@ -95,33 +116,29 @@ export function problemOk(p: Problem): boolean {
 // --- Solution guard ---------------------------------------------------------
 
 // The prompt forbids backtracking / self-correction narration in the solution
-// ("recompute", "wait, let me recheck", "that's wrong"), but the model still
-// leaks it. We can't fix the wording in place safely (the bad line may carry the
-// final number), so a leaked solution drops the whole problem and the deficit
-// loop regenerates a clean one. Only the clear self-correction verbs and phrases
-// are matched — bare "verify"/"actually" are left out to avoid false-positives.
+// ("that's wrong", "scratch that"), but the model still leaks it. We can't fix the
+// wording in place safely (the bad line may carry the final number), so a leaked
+// solution drops the whole problem and the deficit loop regenerates a clean one.
 //
-// This is the single source of truth for the self-correction vocabulary on the
-// guard side; the generation prompt forbids the same phrases in prose.
+// REWRITTEN (Eng/DX finding): the previous list also banned "recompute",
+// "recalculate", "recheck", "double-check", and "let me (verify|check|confirm)" —
+// which bans exactly the sentence "let me verify: substituting back gives 14",
+// good pedagogy, not backtracking. Only genuine self-correction markers remain;
+// a forward verification step is no longer confused with correcting an error.
 const SOLUTION_BACKTRACK = [
-  /\brecomput\w*/i, // recompute / recomputing / recomputed
-  /\brecalculat\w*/i, // recalculate / recalculating
-  /\brecheck\w*/i, // recheck / rechecking
-  /\bdouble-?check\w*/i,
   /\b(scratch that|never ?mind|on second thought|my mistake|oops)\b/i,
   /\bthat'?s wrong\b/i,
   /\bi made (an|a) (error|mistake)\b/i,
   /\bwait,/i,
-  /\blet me (recompute|recalculate|recheck|redo|try|verify|check|confirm|reconsider)\b/i,
 ];
-export function solutionOk(p: Problem): boolean {
+export function solutionOk(p: Problem, _plan: GuardPlan): boolean {
   return !SOLUTION_BACKTRACK.some((re) => re.test(p.solution || ""));
 }
 
 // Adapt-path equivalent of solutionOk: the heavy pass emits a `solutionSketch`
 // rather than a full `solution`, so the same backtracking vocabulary is checked
 // against the sketch field. Reuses SOLUTION_BACKTRACK (single source of truth).
-export function solutionSketchOk(p: Problem): boolean {
+export function solutionSketchOk(p: Problem, _plan: GuardPlan): boolean {
   return !SOLUTION_BACKTRACK.some((re) => re.test(p.solutionSketch || ""));
 }
 
@@ -129,9 +146,18 @@ export function solutionSketchOk(p: Problem): boolean {
 
 // Similarity thresholds — kept lenient so the guard doesn't starve generation.
 // A variant is rejected only when it's clearly too close to a seed on either axis.
-const SEED_NUMERIC_JACCARD_THRESHOLD = 0.5;
-const SEED_NUMERIC_OVERLAP_THRESHOLD = 3; // shared non-trivial integers
-const SEED_LEXICAL_JACCARD_THRESHOLD = 0.45;
+export const SEED_NUMERIC_JACCARD_THRESHOLD = 0.5;
+export const SEED_NUMERIC_OVERLAP_THRESHOLD = 3; // shared non-trivial integers
+export const SEED_LEXICAL_JACCARD_THRESHOLD = 0.45;
+// contentWords() strips ALL math out of a statement, so a short, templated problem
+// ("Solve X by factoring") is left with only 2-4 generic instructional words. On a
+// set that small, Jaccard is a noisy statistic: two problems sharing just 2 of
+// those words already cross 0.45, even when the underlying equations are
+// completely different (found via /investigate — reproduced from a live eval run
+// where this dropped 19/20 candidates for a narrow algebra topic as "duplicates").
+// This mirrors the numeric axis's own absolute-count floor (SEED_NUMERIC_OVERLAP_
+// THRESHOLD) rather than trusting a proportional threshold alone at tiny set sizes.
+export const SEED_LEXICAL_MIN_SHARED_WORDS = 3;
 
 // Extract integer/decimal tokens from a string, excluding trivial values (0, 1, 2).
 function extractNumbers(text: string): number[] {
@@ -186,7 +212,7 @@ function contentWords(text: string): string[] {
 // over-strict lexical drop.
 export function tooSimilarToSeed(
   p: Problem,
-  others: Anchor[],
+  others: { source: string; number: number | null; statement: string }[],
   opts: { numeric?: boolean } = {}
 ): string | null {
   const { numeric = true } = opts;
@@ -206,9 +232,15 @@ export function tooSimilarToSeed(
       if (numJaccard > SEED_NUMERIC_JACCARD_THRESHOLD) return `${label} numeric-jaccard=${numJaccard.toFixed(2)}`;
     }
 
-    // Lexical overlap axis
+    // Lexical overlap axis. Requires an absolute minimum shared-word count in
+    // ADDITION to the proportional Jaccard threshold — on a 3-4 word set (all
+    // that's left after stripping math from a short problem), 2 shared words alone
+    // already exceeds the threshold by chance, not by genuine similarity.
+    const sharedWords = variantWords.filter((w) => seedWords.includes(w)).length;
     const lexJaccard = jaccardSets(variantWords, seedWords);
-    if (lexJaccard > SEED_LEXICAL_JACCARD_THRESHOLD) return `${label} lexical-jaccard=${lexJaccard.toFixed(2)}`;
+    if (sharedWords >= SEED_LEXICAL_MIN_SHARED_WORDS && lexJaccard > SEED_LEXICAL_JACCARD_THRESHOLD) {
+      return `${label} lexical-jaccard=${lexJaccard.toFixed(2)}`;
+    }
   }
   return null;
 }

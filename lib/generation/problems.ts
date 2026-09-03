@@ -4,12 +4,19 @@
 // flag) is now a single flow whose shape is decided by the per-request plan:
 //
 //   plan → anchors (if the corpus covers this student) → seed-sketch (adapt only)
-//        → tiered model call → verify + refill → audit (opt-in) → expand (adapt only)
+//        → tiered model call → verify + refill → SOLVE → audit (opt-in) → expand (adapt only)
 //
 // Corpus anchoring, the variant/adapt path, and the difficulty band are all gated
 // on `plan.competition` being non-null — a property of the retrieved data, not of a
 // choice anyone made in the UI. A Spanish session simply finds no anchors and runs
 // the same loop without them.
+//
+// SOLVE (new): an independent Opus solver verifies every kept item's answer before
+// it's ever expanded into a full worked solution or returned. This is the
+// correctness oracle the pipeline never had — see lib/generation/solve.ts. It runs
+// BEFORE expand (Eng E-A3): buildExpandPrompt is told the last line must equal the
+// given answer, so solving after expansion would render a solution that visibly
+// contradicts its own stored answer.
 //
 // Server-only: reads ANTHROPIC_API_KEY via the client the caller passes in.
 
@@ -22,7 +29,11 @@ import { expandSolutions } from "@/lib/generation/expand";
 import { sketchSeeds } from "@/lib/generation/seed-sketch";
 import { auditSketch } from "@/lib/generation/verifier-model";
 import { planFor, type GenerationPlan } from "@/lib/generation/plan";
+import { solveProblem } from "@/lib/generation/solve";
+import { solverConfig, SOLVER_CLIENT_TIMEOUT_MS, providerForStage, geminiModelFor } from "@/lib/generation/config";
+import { callGeminiWithRetry, geminiClient } from "@/lib/generation/gemini-call";
 import type { UsageAccountant } from "@/lib/generation/usage-accounting";
+import type { DropReason, GenerationRunMeta, StageUsage, VerificationVerdict } from "@/lib/generation/gen-meta";
 import {
   PROBLEMS_TOOL,
   VARIANT_PROBLEMS_TOOL,
@@ -52,12 +63,46 @@ export type ProblemsGenInput = {
 };
 
 export type ProblemsGenResult =
-  | { ok: true; problems: Problem[]; plan: GenerationPlan; count: number }
-  | { ok: false; error: string };
+  | { ok: true; problems: Problem[]; plan: GenerationPlan; count: number; meta: GenerationRunMeta }
+  | { ok: false; error: string; meta: GenerationRunMeta };
+
+// Thin wrapper so every call site below reads the same shape from the accountant.
+// `provider` is passed explicitly per call site (see planUsage/generationUsage
+// below) since the global provider switch (lib/generation/config.ts) means the
+// same "generation" stage can be served by either vendor depending on env.
+function stageUsage(
+  accountant: UsageAccountant,
+  stage: Parameters<UsageAccountant["totals"]>[0],
+  provider: "anthropic" | "gemini",
+  model: string
+): StageUsage | null {
+  return accountant.asStageUsage(stage, provider, model);
+}
 
 export async function generateProblems(input: ProblemsGenInput): Promise<ProblemsGenResult> {
   const { client, profile, topic, recentTopics, accountant } = input;
   const recordGen = (u: Anthropic.Usage) => accountant.record("generation", u);
+
+  // Accumulated across the whole run so a failure path can still return a useful
+  // genMeta (Eng T5: written on failure too, not just beside a successful result).
+  const drops: { reason: DropReason; excerpt: string }[] = [];
+  let escalationsUsed = 0;
+
+  const buildMeta = (extra: Partial<GenerationRunMeta>): GenerationRunMeta => ({
+    planSource: extra.planSource ?? "fallback",
+    tier: extra.tier ?? "easy",
+    answerFormat: extra.answerFormat ?? "",
+    competition: extra.competition ?? null,
+    bandLow: extra.bandLow ?? null,
+    bandHigh: extra.bandHigh ?? null,
+    usage: extra.usage ?? {},
+    drops,
+    verdicts: extra.verdicts ?? [],
+    kept: extra.kept ?? 0,
+    asked: extra.asked ?? 0,
+    escalations: escalationsUsed,
+    ...(extra.truncated ? { truncated: extra.truncated } : {}),
+  });
 
   // STAGE 0 — plan. Free for contest students (deterministic fast path); one cheap
   // Haiku call otherwise. Decides difficulty, answer format, and the rubric.
@@ -74,9 +119,14 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
   // in the UI — the hard tier's long problems warrant a shorter set.
   const count = countForTier(tier);
   // Prompt mode: hard tier (AIME #10–15) transforms real corpus problems into
-  // isomorphic variants (same structure, new surface + numbers). easy and mid
-  // tiers generate fresh problems, anchored by references when we have them.
-  const mode: "variant" | "scratch" = tier === "hard" ? "variant" : "scratch";
+  // isomorphic variants (same structure, new surface + numbers) WHEN the corpus
+  // actually covers this student. "hard" is no longer gated to contest students
+  // alone (the plan tool schema now allows it for any subject — see plan.ts), but
+  // the variant/adapt machinery needs real seeds with real solutions, so a "hard"
+  // tier with no competition still runs the scratch path, just at the top of this
+  // student's difficulty. Verification no longer depends on which branch this
+  // takes — solve.ts checks every tier uniformly, below.
+  const mode: "variant" | "scratch" = tier === "hard" && plan.competition ? "variant" : "scratch";
   // Numeric similarity only means something when the content is mathematical.
   const numericSimilarity = plan.contentType === "math";
 
@@ -127,17 +177,27 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
 
   // Model selection — GENERATION_MODEL is a global override that wins over all
   // tier-specific vars. GENERATION_MODEL_HARD/MID/EASY are optional per-tier overrides.
-  // Defaults: hard → Sonnet 4.6 (adaptive thinking, variant seeds, AIME #10–15);
-  //           mid  → Sonnet 4.6 (adaptive thinking, scratch);
-  //           easy → Haiku 4.5  (no thinking, scratch).
+  // Defaults: hard → Opus 5    (the reasoning-critical tier: adaptive thinking,
+  //             variant seeds, AIME #10–15, or a non-contest student's hardest work);
+  //           mid  → Gemini Flash (adaptive thinking, scratch);
+  //           easy → Gemini Flash (no thinking, scratch).
+  // Which vendor writes THIS tier's problem statements — per-stage (lib/generation/
+  // config.ts): the hard tier defaults to Anthropic Opus, every other tier defaults
+  // to Gemini. The solver (solve.ts) is never touched by this: it always stays on
+  // Anthropic regardless.
+  const tierProvider = providerForStage(tier);
+  const useGemini = tierProvider === "gemini";
   const model =
     process.env.GENERATION_MODEL ??
     (tier === "easy"
       ? (process.env.GENERATION_MODEL_EASY ?? "claude-haiku-4-5")
       : tier === "mid"
         ? (process.env.GENERATION_MODEL_MID ?? "claude-sonnet-4-6")
-        : (process.env.GENERATION_MODEL_HARD ?? "claude-sonnet-4-6"));
-  console.log(`[/api/generate] model=${model}`);
+        : (process.env.GENERATION_MODEL_HARD ?? "claude-opus-5"));
+  const geminiTierModel = geminiModelFor(tier);
+  console.log(`[/api/generate] model=${useGemini ? geminiTierModel : model} provider=${tierProvider} tier=${tier}`);
+  const seedSketchProvider = providerForStage("seedSketch");
+  const expandProvider = providerForStage("expand");
 
   // Adapt-path knobs (env-swappable; only the adapt path reads them). Effort for
   // the transformation pass defaults LOW — adapting a known-correct seed solution is
@@ -265,6 +325,24 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
     const settled = await Promise.allSettled(
       chunks.map((chunkSize, ci) => {
         const cb = build({ count: chunkSize, anchors: chunkSeeds[ci], avoid, chunkIndex: ci });
+        if (useGemini) {
+          const cfg = sonnetChunkConfig(chunkSize, effortOverride);
+          return callGeminiWithRetry(
+            geminiClient(),
+            geminiTierModel,
+            cb.system,
+            cb.user,
+            {
+              functionName: cfg.tool.name,
+              functionDescription: cfg.tool.description ?? "",
+              parametersJsonSchema: cfg.tool.input_schema,
+              maxOutputTokens: cfg.maxTokens,
+              thinkingLevel: cfg.effort ?? "medium",
+            },
+            cfg.validate,
+            recordGen
+          );
+        }
         return callToolWithRetry(
           client,
           model,
@@ -290,7 +368,7 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
     return out;
   }
 
-  // Generate, keep only well-solved problems, and regenerate the deficit. The
+  // Generate, keep only well-formed problems, and regenerate the deficit. The
   // verification pass drops bad items, so a single retry can still land short of
   // `count` if the retry under-delivers or its own problems get dropped — over-request
   // the deficit so one dropped problem doesn't leave the set short.
@@ -299,12 +377,45 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
   // used to churn here: near-verbatim variants tripped the seed-similarity guard
   // and burned 4 full rounds. The prompt now forces a re-dressed surface on the
   // first pass, so the relaxation lands at attempt 2 instead of 4.
+  //
+  // NOTE on the answer guard: answerOkFor is deliberately NOT called in this loop
+  // (Eng E1 / the split guards decision). It used to drop a candidate here based on
+  // the GENERATOR's self-reported answer — but that answer is about to become a
+  // hypothesis the solve stage confirms or overrides, so rejecting a well-formed
+  // problem over a value that's going to be replaced anyway threw away good
+  // statements for free. answerOkFor now runs once, post-solve, against whichever
+  // answer is actually final.
   const maxAttempts = 2;
   const kept: Problem[] = [];
   const seen = new Set<string>();
   // Statements fed back on the retry so it diverges instead of re-emitting what we
   // already have (or, on the variant path, what we just rejected).
   const avoid: string[] = [];
+  // Which provider/model actually served each stage — each stage picks its OWN
+  // provider (lib/generation/config.ts's providerForStage), not one flag for the
+  // whole request, so "plan" and "generation" can (and by default do) disagree.
+  // solve.ts and the audit stage (verifier-model.ts) are unaffected by any of this
+  // and always report "anthropic" since they never call Gemini.
+  const planProvider = providerForStage("plan");
+  const planUsage = () =>
+    stageUsage(
+      accountant,
+      "plan",
+      planProvider,
+      planProvider === "gemini" ? geminiModelFor("plan") : (process.env.GENERATION_MODEL_PLAN ?? "claude-haiku-4-5")
+    );
+  const generationUsage = () => stageUsage(accountant, "generation", tierProvider, useGemini ? geminiTierModel : model);
+  const failMeta = () =>
+    buildMeta({
+      planSource: plan.source,
+      tier: plan.tier,
+      answerFormat: plan.answerFormat,
+      competition: plan.competition,
+      bandLow: plan.bandLow,
+      bandHigh: plan.bandHigh,
+      usage: { plan: planUsage() ?? undefined },
+      asked: count,
+    });
 
   for (let attempt = 0; attempt < maxAttempts && kept.length < count; attempt++) {
     const need = count - kept.length;
@@ -323,7 +434,29 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
         batch = await generateSonnet(ask, attemptAvoid);
       } else {
         const b = build({ count: ask, anchors: seedPool, avoid: attemptAvoid });
-        batch = await callToolWithRetry(client, model, b.system, b.user, easyConfig, recordGen);
+        if (useGemini) {
+          batch = await callGeminiWithRetry(
+            geminiClient(),
+            geminiTierModel,
+            b.system,
+            b.user,
+            {
+              functionName: easyConfig.tool.name,
+              functionDescription: easyConfig.tool.description ?? "",
+              parametersJsonSchema: easyConfig.tool.input_schema,
+              maxOutputTokens: easyConfig.maxTokens,
+              // Easy tier is thinking-disabled on Anthropic (Haiku 4.5 rejects
+              // output_config.effort); Gemini has no forced-tool/thinking conflict,
+              // so "low" thinking is the closer analogue rather than trying to
+              // disable it entirely.
+              thinkingLevel: "low",
+            },
+            easyConfig.validate,
+            recordGen
+          );
+        } else {
+          batch = await callToolWithRetry(client, model, b.system, b.user, easyConfig, recordGen);
+        }
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
@@ -331,9 +464,19 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
       const status = e instanceof Anthropic.APIError ? ` status=${e.status}` : "";
       const name = e instanceof Error ? e.name : "";
       console.error(`[/api/generate] generation failed: ${msg || name}${status}`);
+      // "filtered" is Gemini-only (RECITATION/SAFETY, Eng H3) — a class Anthropic
+      // tool-use never had. Distinct drop reason and message so it's diagnosable
+      // from genMeta rather than lumped into a generic failure.
+      drops.push({ reason: msg === "filtered" ? "content-filtered" : "generation-failed", excerpt: msg || name });
       return {
         ok: false,
-        error: msg === "truncated" ? "Generation was too long — try again." : "Generation failed — try again.",
+        error:
+          msg === "truncated"
+            ? "Generation was too long — try again."
+            : msg === "filtered"
+              ? "Generation was blocked by a content filter — try a different topic or try again."
+              : "Generation failed — try again.",
+        meta: failMeta(),
       };
     }
 
@@ -343,20 +486,14 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
     for (const p of batch) {
       if (kept.length >= count) break;
       if (seen.has(p.problem)) continue;
-      if (!problemOk(p)) {
+      if (!problemOk(p, plan)) {
         console.warn(`[/api/generate] dropped malformed problem: ${p.problem.slice(0, 80)}…`);
+        drops.push({ reason: "malformed-statement", excerpt: p.problem.slice(0, 80) });
         continue;
       }
-      if (!answerOkFor(p, plan)) {
-        console.warn(
-          `[/api/generate] dropped bad answer (${plan.answerFormat}) "${(p.answer || "").slice(0, 40)}": ${p.problem.slice(0, 60)}…`
-        );
-        continue;
-      }
-      if (!sketchGuardOk(p)) {
-        console.warn(
-          `[/api/generate] dropped ${useAdapt ? "sketch" : "solution"} with backtracking: ${p.problem.slice(0, 80)}…`
-        );
+      if (!sketchGuardOk(p, plan)) {
+        console.warn(`[/api/generate] dropped ${useAdapt ? "sketch" : "solution"} with backtracking: ${p.problem.slice(0, 80)}…`);
+        drops.push({ reason: "backtracking", excerpt: p.problem.slice(0, 80) });
         continue;
       }
       // Seed-similarity is not a drop reason — distinct per-chunk seeds already keep
@@ -376,13 +513,12 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
       if (kept.length > 0) {
         const dupReason = tooSimilarToSeed(
           p,
-          kept.map((k) => ({ source: "kept", number: null, statement: k.problem, answer: k.answer, solution: null })),
+          kept.map((k) => ({ source: "kept", number: null, statement: k.problem })),
           { numeric: numericSimilarity }
         );
         if (dupReason) {
-          console.warn(
-            `[/api/generate] dropped near-duplicate of a kept problem (${dupReason}): ${p.problem.slice(0, 80)}…`
-          );
+          console.warn(`[/api/generate] dropped near-duplicate of a kept problem (${dupReason}): ${p.problem.slice(0, 80)}…`);
+          drops.push({ reason: "near-duplicate", excerpt: p.problem.slice(0, 80) });
           continue;
         }
       }
@@ -393,7 +529,158 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
   }
 
   if (kept.length === 0) {
-    return { ok: false, error: "Generation failed — couldn't produce solvable problems. Try again." };
+    return {
+      ok: false,
+      error: "Generation failed — couldn't produce solvable problems. Try again.",
+      meta: failMeta(),
+    };
+  }
+
+  // STAGE — independent solve. Runs before expand (Eng E-A3, see file header). The
+  // generator's self-reported answer is now a hypothesis this either confirms or
+  // overrides, never the stored value on its own (Premise 3: the generator must
+  // never author answers). Bounded and non-blocking: a solver failure never fails
+  // the request, and escalation is capped so a set can't spend an unbounded number
+  // of Opus calls chasing consensus.
+  const verdicts: VerificationVerdict[] = new Array(kept.length).fill("not-applicable");
+  if (plan.answerFormat !== "open") {
+    const cfg = solverConfig();
+    if (cfg.enabled && cfg.tiers.has(tier)) {
+      // Separate client with a short per-call timeout (Eng finding): route.ts pins
+      // the shared client's timeout to maxDuration*1000 for the non-streaming easy
+      // tier's sake, and reusing that client here would let one hung solve eat the
+      // whole 300s function budget before session.update ever runs.
+      const solverClient = new Anthropic({ maxRetries: 2, timeout: SOLVER_CLIENT_TIMEOUT_MS });
+      const survivors: Problem[] = [];
+      const survivorVerdicts: VerificationVerdict[] = [];
+
+      for (const p of kept) {
+        const outcome = await solveProblem({
+          client: solverClient,
+          model: cfg.model,
+          escalateModel: cfg.escalateModel,
+          effort: cfg.effort,
+          problem: p.problem,
+          domain: plan.domain,
+          rubric: plan.rubric,
+          answerFormat: plan.answerFormat,
+          generatorAnswer: p.answer,
+          maxEscalations: cfg.maxEscalations,
+          recordUsage: (u) => accountant.record("solve", u),
+        });
+        if (outcome.kind !== "not-applicable" && outcome.kind !== "error") {
+          escalationsUsed += Math.max(0, outcome.attempts - 1);
+        }
+
+        if (outcome.kind === "answer") {
+          if (outcome.agreesWithGenerator) {
+            survivors.push(p);
+            survivorVerdicts.push("verified");
+          } else if (useAdapt) {
+            // Adapt path: no full `solution` has been written yet (still a bare
+            // sketch) — safe to overwrite the answer; expand() runs after this and
+            // derives its worked solution from the corrected value.
+            p.answer = outcome.answer;
+            survivors.push(p);
+            survivorVerdicts.push("verified");
+          } else {
+            // Scratch path: p.solution already justifies the GENERATOR's answer.
+            // Silently overwriting only p.answer here would ship a worked solution
+            // that visibly contradicts its own stored answer — the same hazard the
+            // solve-before-expand ordering exists to prevent, just on the other
+            // side of the adapt/scratch boundary. Keep the original, internally
+            // consistent pair; mark it unverified rather than self-contradictory.
+            survivors.push(p);
+            survivorVerdicts.push("unverified");
+          }
+        } else if (outcome.kind === "no-consensus") {
+          console.warn(`[/api/generate] dropped (solver no-consensus after ${outcome.attempts} attempts): ${p.problem.slice(0, 80)}…`);
+          drops.push({ reason: "solver-no-consensus", excerpt: p.problem.slice(0, 80) });
+        } else if (outcome.kind === "ambiguous") {
+          // Advisory, not an unconditional drop signal on its own — but a solve
+          // that can't even attempt an answer because the problem is ill-posed
+          // means there's nothing gradeable to ship either way.
+          console.warn(`[/api/generate] dropped (solver flagged ambiguous: ${outcome.note}): ${p.problem.slice(0, 80)}…`);
+          drops.push({ reason: "solver-ambiguous", excerpt: p.problem.slice(0, 80) });
+        } else {
+          // "error" — non-blocking: ship the item as generated, unverified.
+          survivors.push(p);
+          survivorVerdicts.push("unverified");
+        }
+      }
+
+      kept.length = 0;
+      kept.push(...survivors);
+      verdicts.length = 0;
+      verdicts.push(...survivorVerdicts);
+    } else {
+      verdicts.length = 0;
+      verdicts.push(...kept.map(() => "unverified" as VerificationVerdict));
+    }
+  }
+
+  if (kept.length === 0) {
+    return {
+      ok: false,
+      error: "Generation failed — the solver couldn't confirm any answer. Try again.",
+      meta: buildMeta({
+        planSource: plan.source,
+        tier: plan.tier,
+        answerFormat: plan.answerFormat,
+        competition: plan.competition,
+        bandLow: plan.bandLow,
+        bandHigh: plan.bandHigh,
+        usage: {
+          plan: planUsage() ?? undefined,
+          generation: generationUsage() ?? undefined,
+          solve: stageUsage(accountant, "solve", "anthropic", solverConfig().model) ?? undefined,
+        },
+        verdicts,
+        asked: count,
+      }),
+    };
+  }
+
+  // Post-solve answer-format check (Eng: "answerOkFor runs post-solve against the
+  // solver's answer") — applied to whichever answer is FINAL for each item,
+  // whatever its source, since this is now the only format gate left standing.
+  {
+    const survivors: Problem[] = [];
+    const survivorVerdicts: VerificationVerdict[] = [];
+    kept.forEach((p, i) => {
+      if (!answerOkFor(p, plan)) {
+        console.warn(`[/api/generate] dropped bad answer (${plan.answerFormat}) "${(p.answer || "").slice(0, 40)}": ${p.problem.slice(0, 60)}…`);
+        drops.push({ reason: "bad-answer-format", excerpt: p.problem.slice(0, 80) });
+        return;
+      }
+      survivors.push(p);
+      survivorVerdicts.push(verdicts[i]);
+    });
+    kept.length = 0;
+    kept.push(...survivors);
+    verdicts.length = 0;
+    verdicts.push(...survivorVerdicts);
+  }
+
+  if (kept.length === 0) {
+    return {
+      ok: false,
+      error: "Generation failed — couldn't produce a validly formatted answer. Try again.",
+      meta: buildMeta({
+        planSource: plan.source,
+        tier: plan.tier,
+        answerFormat: plan.answerFormat,
+        competition: plan.competition,
+        bandLow: plan.bandLow,
+        bandHigh: plan.bandHigh,
+        usage: {
+          plan: planUsage() ?? undefined,
+          generation: generationUsage() ?? undefined,
+          solve: stageUsage(accountant, "solve", "anthropic", solverConfig().model) ?? undefined,
+        },
+        asked: count,
+      }),
+    };
   }
 
   // Adapt path: optional correctness audit + bounded escalation, then expand the
@@ -406,10 +693,10 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
     // arithmetic; escalate at most 3 flagged items to a single heavy full-solve that
     // regenerates fresh variants to replace them. No re-verify, no loop.
     if (verifyOn) {
-      const verdicts = await auditSketch(client, escalateModel, sketchItems(), buildAuditPrompt, (u) =>
+      const verdictsAudit = await auditSketch(client, escalateModel, sketchItems(), buildAuditPrompt, (u) =>
         accountant.record("verification", u)
       );
-      const failIdx = verdicts.flatMap((v, i) => (v === "fail" ? [i] : [])).slice(0, 3);
+      const failIdx = verdictsAudit.flatMap((v, i) => (v === "fail" ? [i] : [])).slice(0, 3);
       if (failIdx.length > 0) {
         console.warn(`[/api/generate] audit flagged ${failIdx.length} sketch(es) — escalating to a heavy solve`);
         let replacements: Problem[] = [];
@@ -424,11 +711,12 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
         for (const rep of replacements) {
           if (r >= failIdx.length) break;
           if (seen.has(rep.problem)) continue;
-          if (!problemOk(rep) || !answerOkFor(rep, plan) || !solutionSketchOk(rep)) continue;
+          if (!problemOk(rep, plan) || !answerOkFor(rep, plan) || !solutionSketchOk(rep, plan)) continue;
           const target = failIdx[r];
           seen.delete(kept[target].problem);
           seen.add(rep.problem);
           kept[target] = rep;
+          verdicts[target] = "unverified"; // replacement bypassed the solve stage — not re-solved
           r++;
         }
       }
@@ -442,7 +730,7 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
     );
     kept.forEach((p, i) => {
       p.solution = solutions[i] ?? p.solutionSketch ?? "";
-      if (!solutionOk(p)) p.solution = p.solutionSketch ?? p.solution;
+      if (!solutionOk(p, plan)) p.solution = p.solutionSketch ?? p.solution;
     });
   }
 
@@ -457,5 +745,42 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
   }));
   console.log(`[/api/generate] returned ${problems.length}/${count} verified problems`);
 
-  return { ok: true, problems, plan, count };
+  const solverCfgFinal = solverConfig();
+  return {
+    ok: true,
+    problems,
+    plan,
+    count,
+    meta: buildMeta({
+      planSource: plan.source,
+      tier: plan.tier,
+      answerFormat: plan.answerFormat,
+      competition: plan.competition,
+      bandLow: plan.bandLow,
+      bandHigh: plan.bandHigh,
+      usage: {
+        plan: planUsage() ?? undefined,
+        "seed-sketch":
+          stageUsage(
+            accountant,
+            "seed-sketch",
+            seedSketchProvider,
+            seedSketchProvider === "gemini" ? geminiModelFor("seedSketch") : expandModel
+          ) ?? undefined,
+        generation: generationUsage() ?? undefined,
+        solve: stageUsage(accountant, "solve", "anthropic", solverCfgFinal.model) ?? undefined,
+        verification: stageUsage(accountant, "verification", "anthropic", escalateModel) ?? undefined,
+        expansion:
+          stageUsage(
+            accountant,
+            "expansion",
+            expandProvider,
+            expandProvider === "gemini" ? geminiModelFor("expand") : expandModel
+          ) ?? undefined,
+      },
+      verdicts,
+      kept: kept.length,
+      asked: count,
+    }),
+  };
 }
