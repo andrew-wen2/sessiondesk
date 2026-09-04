@@ -20,11 +20,22 @@ const ANTHROPIC_RATES: Record<string, Rates> = {
   "claude-haiku-4-5": { input: 0.8, output: 4, cacheWrite: 1, cacheRead: 0.08 },
 };
 
-// Gemini rates are intentionally absent until Stage 3 confirms a real model id and
-// its published price — see the plan's "Verification caveat on the model." Looking
-// one up here returns null cost rather than a guessed number.
+// Gemini rates are STILL intentionally absent: nobody has confirmed a published
+// price for the pinned model id, and a guessed rate is worse than a missing one
+// because it produces a confident wrong number instead of an obvious gap.
+//
+// The consequence is load-bearing, so it is handled rather than hidden: under the
+// default provider policy (config.ts — everything but the hard tier runs on Gemini)
+// MOST stages price as null, so `costForRun` reports them in `unpriced` and every
+// caller must say so. Fill this in with real published numbers before using any
+// figure from this file as a go/no-go on spend.
+const GEMINI_RATES: Record<string, Rates> = {
+  // "gemini-3.8-flash": { input: ?, output: ?, cacheWrite: ?, cacheRead: ? },
+};
+
 const RATES: Record<string, Record<string, Rates>> = {
   anthropic: ANTHROPIC_RATES,
+  gemini: GEMINI_RATES,
 };
 
 // Longest-prefix match so a dated snapshot id ("claude-opus-5-20260815") still
@@ -49,12 +60,36 @@ export function costForStage(u: StageUsage): number | null {
   );
 }
 
-export function costForRun(usage: Partial<Record<string, StageUsage>>): number {
+export type RunCost = {
+  /** Dollars for the stages this file can price. NOT the run's cost when `unpriced` is non-empty. */
+  total: number;
+  /** `provider/model` for every stage with no rate table entry. */
+  unpriced: string[];
+};
+
+// Returns the unpriced stages alongside the total, and callers MUST surface them.
+//
+// This used to return a bare number and skip unpriced stages silently
+// (`if (c != null) total += c`). Under the default provider policy every stage but
+// the hard tier runs on Gemini, and Gemini has no rate table below — so the "total"
+// was an Anthropic-only subtotal wearing the name of a full cost, and any decision
+// made on it (is a set too expensive to send?) was made on a number that was not
+// the cost. A partial total presented as a total is worse than no number at all.
+export function costForRun(usage: Partial<Record<string, StageUsage>>): RunCost {
   let total = 0;
+  const unpriced: string[] = [];
   for (const u of Object.values(usage)) {
     if (!u) continue;
     const c = costForStage(u);
-    if (c != null) total += c;
+    if (c == null) unpriced.push(`${u.provider}/${u.model}`);
+    else total += c;
   }
-  return total;
+  return { total, unpriced: [...new Set(unpriced)] };
+}
+
+// One-line summary safe to print anywhere: never claims a total it doesn't have.
+export function formatRunCost(cost: RunCost): string {
+  const base = `$${cost.total.toFixed(2)}`;
+  if (cost.unpriced.length === 0) return base;
+  return `${base}+ (UNPRICED: ${cost.unpriced.join(", ")} — figure is a partial subtotal)`;
 }

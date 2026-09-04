@@ -50,6 +50,8 @@ type RunRecord = {
   dropsByReason?: Record<string, number>;
   verdictCounts?: Record<string, number>;
   dollars?: number;
+  /** provider/model for stages with no rate table — `dollars` is a partial subtotal when non-empty. */
+  unpricedStages?: string[];
   wallTimeMs: number;
   // The actual generated content — without this, --rate has nothing to show.
   problems?: Pick<Problem, "problem" | "answer" | "solution" | "solutionSketch">[];
@@ -139,6 +141,7 @@ async function runEval(args: ReturnType<typeof parseArgs>) {
       for (const d of result.meta.drops) dropsByReason[d.reason] = (dropsByReason[d.reason] ?? 0) + 1;
       const verdictCounts: Record<string, number> = {};
       for (const v of result.meta.verdicts) verdictCounts[v] = (verdictCounts[v] ?? 0) + 1;
+      const cost = costForRun(result.meta.usage);
       record = {
         id: f.id,
         ok: result.ok,
@@ -149,7 +152,8 @@ async function runEval(args: ReturnType<typeof parseArgs>) {
         asked: result.meta.asked,
         dropsByReason,
         verdictCounts,
-        dollars: costForRun(result.meta.usage),
+        dollars: cost.total,
+        ...(cost.unpriced.length ? { unpricedStages: cost.unpriced } : {}),
         wallTimeMs: Date.now() - start,
         problems: result.ok
           ? result.problems.map((p) => ({
@@ -164,7 +168,12 @@ async function runEval(args: ReturnType<typeof parseArgs>) {
       record = { id: f.id, ok: false, error: e instanceof Error ? e.message : String(e), wallTimeMs: Date.now() - start };
     }
     appendFileSync(outPath, JSON.stringify(record) + "\n");
-    console.log(`[${f.id}] ok=${record.ok} kept=${record.kept ?? 0}/${record.asked ?? 0} $${(record.dollars ?? 0).toFixed(3)} ${record.wallTimeMs}ms`);
+    // "+" marks a partial subtotal: some stage had no rate table, so the real cost is
+    // higher than the number shown. Never print a bare figure that isn't the cost.
+    const partial = record.unpricedStages?.length ? "+" : "";
+    console.log(
+      `[${f.id}] ok=${record.ok} kept=${record.kept ?? 0}/${record.asked ?? 0} $${(record.dollars ?? 0).toFixed(3)}${partial} ${record.wallTimeMs}ms`
+    );
   }
   console.log(`\nDone. Results: ${outPath}`);
   console.log(`Next: npx tsx scripts/eval-generation.ts --rate ${args.out}`);
@@ -283,6 +292,15 @@ function compareRuns(baselinePath: string, candidatePath: string) {
       `${b?.kept ?? "-"}/${b?.asked ?? "-"} -> ${c?.kept ?? "-"}/${c?.asked ?? "-"}`.padEnd(30),
       `${fmt(b?.dollars)} -> ${fmt(c?.dollars)}`.padEnd(24),
       `${fmt(br)} -> ${fmt(cr)}`
+    );
+  }
+  const unpricedSeen = new Set<string>();
+  for (const r of [...baseById.values(), ...candById.values()]) {
+    for (const u of r.unpricedStages ?? []) unpricedSeen.add(u);
+  }
+  if (unpricedSeen.size) {
+    console.log(
+      `\nWARNING: dollar figures are PARTIAL subtotals — no rate table for ${[...unpricedSeen].join(", ")}. Add rates in lib/generation/pricing.ts before comparing spend.`
     );
   }
   console.log("\n=== TOTALS ===");

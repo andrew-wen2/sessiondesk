@@ -20,7 +20,7 @@ import path from "node:path";
 import { solveProblem } from "@/lib/generation/solve";
 import { solverConfig, SOLVER_CLIENT_TIMEOUT_MS } from "@/lib/generation/config";
 import { answersMatch } from "@/lib/generation/answer-match";
-import { costForRun } from "@/lib/generation/pricing";
+import { costForRun, formatRunCost } from "@/lib/generation/pricing";
 import type { AnswerFormat } from "@/lib/generation/plan";
 
 type CorpusFixture = { id: string; source: string; number: number | null; statement: string; answer: string };
@@ -177,7 +177,9 @@ async function main() {
   for (const [source, b] of Object.entries(bySource)) {
     console.log(`  ${source}: ${b.correct}/${b.total} = ${((b.correct / b.total) * 100).toFixed(1)}%`);
   }
-  console.log(`Estimated cost: $${costForRun(usage).toFixed(2)} (verify model pricing is current — see pricing.ts)`);
+  console.log(
+    `Estimated cost: ${formatRunCost(costForRun(usage))} (verify model pricing is current — see pricing.ts)`
+  );
 }
 
 main().catch((e) => {
