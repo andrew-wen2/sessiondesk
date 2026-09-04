@@ -4,9 +4,11 @@
 //     independent solver's? Both sides are model output, so this needs to be
 //     STRICT — two solvers agreeing on the same wrong reading is a real risk, and a
 //     loose match would launder that into false confidence.
-//   - the deferred worksheet: did the student's typed answer match the stored one?
-//     `x=2` vs `2` is a normal way for a student to answer and should be accepted;
-//     between two solvers it's a red flag. LOOSE mode exists for that caller.
+//   - the student worksheet (app/w/[[...token]]): did the student's typed answer
+//     match the stored one? `x=2` vs `2`, `1,024` vs `1024`, a pasted U+2212 minus —
+//     all normal student typing, all of which must be accepted; between two solvers
+//     each is a red flag. LOOSE mode exists for that caller, and every leniency in it
+//     is constrained so it cannot turn a genuine mismatch into a match.
 // (Eng A5 — one normalizer, two thresholds, AnswerFormat as a parameter.)
 //
 // The load-bearing case: answersMatch("", "") MUST be false. An empty answer means
@@ -72,6 +74,37 @@ function stripTrailingWords(normalized: string): string {
   return m ? m[1] : normalized;
 }
 
+// Loose mode only. Three ways a student types a number that no parser here accepts,
+// each of which currently grades a CORRECT answer as wrong — the worst failure this
+// function can have, because the student has no recourse and no retry:
+//   - U+2212 MINUS SIGN, which is what you get pasting from a rendered page or PDF
+//   - a thousands separator ("1,024")
+//   - a trailing decimal point ("14."), matching neither the integer nor the
+//     decimal branch of tryParseNumber
+function looseNumericCleanup(normalized: string): string {
+  let s = normalized.replace(/−/g, "-");
+  // Only when the commas are genuinely thousands separators — never touch a tuple
+  // like "(1,2)" or a list.
+  if (/^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(s)) s = s.replace(/,/g, "");
+  if (/^-?\d+\.$/.test(s)) s = s.slice(0, -1);
+  return s;
+}
+
+// Loose mode only: "x=2" -> "2". Answering an equation-shaped problem by writing the
+// variable back is normal student behaviour. Constrained three ways so it can never
+// turn a genuine mismatch into a match:
+//   - the remainder must parse as a number, so "y=2x+1" under `expression` is left
+//     alone rather than mutilated into "2x+1"
+//   - the variable may be multi-character ("n_1=", "ab=")
+//   - callers must reject a pair whose variables differ, so "y=3" and "x=3" stay
+//     different answers (enforced in answersMatch, which sees both sides)
+function splitAnswerPrefix(normalized: string): { varName: string | null; value: string } {
+  const m = /^([a-z][a-z0-9_]*)=(.+)$/.exec(normalized);
+  if (!m) return { varName: null, value: normalized };
+  if (tryParseNumber(m[2]) == null) return { varName: null, value: normalized };
+  return { varName: m[1], value: m[2] };
+}
+
 export function answersMatch(
   a: string,
   b: string,
@@ -91,6 +124,19 @@ export function answersMatch(
   let normA = normalizeString(rawA);
   let normB = normalizeString(rawB);
   if (strictness === "loose") {
+    normA = looseNumericCleanup(normA);
+    normB = looseNumericCleanup(normB);
+
+    // Strip a variable prefix only when it can't launder a mismatch: if both sides
+    // name a variable and the names differ, "y=3" and "x=3" are different answers
+    // and both keep their prefix so they compare unequal.
+    const pa = splitAnswerPrefix(normA);
+    const pb = splitAnswerPrefix(normB);
+    if (!(pa.varName && pb.varName && pa.varName !== pb.varName)) {
+      normA = pa.value;
+      normB = pb.value;
+    }
+
     normA = stripTrailingWords(normA);
     normB = stripTrailingWords(normB);
   }

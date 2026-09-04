@@ -62,4 +62,62 @@ describe("answersMatch", () => {
   it("is case- and whitespace-insensitive", () => {
     expect(answersMatch(" Blue ", "blue")).toBe(true);
   });
+
+  // The header of answer-match.ts has always promised loose mode accepts "x=2" for a
+  // stored "2". It did not — normalizeString leaves "x=2" intact, tryParseNumber
+  // returns null, stripTrailingWords needs a leading digit, and `integer` skips the
+  // sorted-token fallback. These lock in the fix.
+  describe("loose mode: a student writing the variable back", () => {
+    it("accepts x=2 for a stored 2", () => {
+      expect(answersMatch("x=2", "2", { format: "integer", strictness: "loose" })).toBe(true);
+    });
+
+    it("accepts a multi-character variable", () => {
+      expect(answersMatch("n_1 = 14", "14", { format: "integer", strictness: "loose" })).toBe(true);
+    });
+
+    it("still rejects it in strict mode", () => {
+      expect(answersMatch("x=2", "2", { format: "integer", strictness: "strict" })).toBe(false);
+    });
+
+    it("does NOT match y=3 against x=3 — different variables, different answers", () => {
+      expect(answersMatch("y=3", "x=3", { format: "expression", strictness: "loose" })).toBe(false);
+    });
+
+    it("leaves an equation-valued answer unmutilated", () => {
+      // The remainder "2x+1" is not a number, so the prefix must survive and this
+      // must not collapse to a comparison of "2x+1" against "2x+1".
+      expect(answersMatch("y=2x+1", "2x+1", { format: "expression", strictness: "loose" })).toBe(
+        false
+      );
+      expect(answersMatch("y=2x+1", "y=2x+1", { format: "expression", strictness: "loose" })).toBe(
+        true
+      );
+    });
+  });
+
+  // Three ways a student types a correct number that the matcher used to mark wrong.
+  describe("loose mode: numeric typing students actually do", () => {
+    it("accepts a thousands separator", () => {
+      expect(answersMatch("1,024", "1024", { format: "integer", strictness: "loose" })).toBe(true);
+    });
+
+    it("accepts a trailing decimal point", () => {
+      expect(answersMatch("14.", "14", { format: "integer", strictness: "loose" })).toBe(true);
+    });
+
+    it("accepts a pasted Unicode minus (U+2212)", () => {
+      expect(answersMatch("−14", "-14", { format: "integer", strictness: "loose" })).toBe(true);
+    });
+
+    it("does not strip commas that are not thousands separators", () => {
+      expect(answersMatch("(1,2)", "12", { format: "short-text", strictness: "loose" })).toBe(false);
+    });
+
+    it("leaves all three alone in strict mode", () => {
+      expect(answersMatch("1,024", "1024", { strictness: "strict" })).toBe(false);
+      expect(answersMatch("14.", "14", { strictness: "strict" })).toBe(false);
+      expect(answersMatch("−14", "-14", { strictness: "strict" })).toBe(false);
+    });
+  });
 });
