@@ -8,7 +8,7 @@ import type { ButtonHTMLAttributes } from "react";
 // class and stay anchors rather than becoming buttons with onClick navigation.
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "dangerSolid";
-export type ButtonSize = "sm" | "md";
+export type ButtonSize = "sm" | "md" | "lg";
 
 const VARIANT: Record<ButtonVariant, string> = {
   primary: "bg-primary text-white shadow-sm hover:bg-primary-hover",
@@ -18,15 +18,22 @@ const VARIANT: Record<ButtonVariant, string> = {
   dangerSolid: "bg-danger text-white shadow-sm hover:bg-danger/90",
 };
 
+// A size variant, not a `className="h-11"` at the call site: Tailwind resolves
+// conflicting utilities by stylesheet order, so an h-11 passed alongside md's h-9
+// loses and the button silently stays 36px.
 const SIZE: Record<ButtonSize, string> = {
   sm: "h-8 gap-1.5 px-2.5 text-sm",
   md: "h-9 gap-2 px-3.5 text-sm",
+  // 44px is the iOS touch-target floor. `md` is fine everywhere the tutor works on a
+  // desktop; this is for the controls a student taps on a phone.
+  lg: "h-11 gap-2 px-4 text-sm",
 };
 
 // Icon-only: square, so a lone glyph isn't stranded in a pill.
 const ICON_SIZE: Record<ButtonSize, string> = {
   sm: "h-8 w-8 px-0",
   md: "h-9 w-9 px-0",
+  lg: "h-11 w-11 px-0",
 };
 
 const BASE =
