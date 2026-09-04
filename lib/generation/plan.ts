@@ -33,6 +33,20 @@ export type ContentType = "math" | "prose" | "code" | "mixed";
 // answer (a writing prompt genuinely has none).
 export type AnswerFormat = "integer" | "numeric" | "expression" | "short-text" | "open";
 
+export const ANSWER_FORMATS: readonly AnswerFormat[] = [
+  "integer",
+  "numeric",
+  "expression",
+  "short-text",
+  "open",
+];
+
+// genMeta stores answerFormat as a bare `string` and parseGenMeta is an unchecked cast,
+// so anything reading it back needs to narrow rather than trust it.
+export function isAnswerFormat(raw: unknown): raw is AnswerFormat {
+  return typeof raw === "string" && (ANSWER_FORMATS as readonly string[]).includes(raw);
+}
+
 export type Tier = "easy" | "mid" | "hard";
 
 export type GenerationPlan = {
@@ -132,7 +146,13 @@ function fallbackPlan(profile: string, topic: string, source: "model" | "fallbac
 
 // AIME is the only contest whose answer format is unambiguous enough to hard-enforce.
 // F=ma answers are symbolic (a lone symbol like E is legitimate), AMC is a computed value.
-function competitionAnswerFormat(competition: Competition): AnswerFormat {
+//
+// Exported because grading a student's typed answer needs the SAME derivation the
+// generator used, and genMeta cannot always supply it: every row written before the
+// genMeta migration reads null, and the pipeline's own failure path writes an empty
+// string (problems.ts). Falling back to a hardcoded "integer" would be a guess that
+// happens to be right most of the time — this is the real answer.
+export function competitionAnswerFormat(competition: Competition): AnswerFormat {
   if (competition === "AIME") return "integer";
   if (competition === "Fma") return "expression";
   return "numeric";

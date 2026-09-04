@@ -6,7 +6,14 @@ import { SESSION_COOKIE, verifySession } from "@/lib/auth";
 // the auth pages (login/register) and the auth API routes (login/register/logout
 // + the Google OAuth callback at /api/auth/google). Static assets are excluded via
 // the matcher below.
-const PUBLIC_PATHS = ["/login", "/register", "/api/auth"];
+//
+// `/w` and `/api/w` are the student practice link: a token in the URL is the only
+// credential, because the student has no account. Matching here is by PREFIX, so
+// EVERY route under `/api/w/*` is unauthenticated by construction, forever — the same
+// property `/api/auth` has, and the same discipline it demands: each route re-checks
+// the token itself. Adding a route under this prefix and forgetting that check
+// publishes it to the internet.
+const PUBLIC_PATHS = ["/login", "/register", "/api/auth", "/w", "/api/w"];
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));

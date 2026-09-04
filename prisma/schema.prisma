@@ -25,9 +25,16 @@ model User {
   // mirror into (null → "primary"). App client id/secret stay in env.
   googleRefreshToken String?
   googleCalendarId   String?
+  // Shown to STUDENTS on a shared practice link ("From Andrew"). A page with no
+  // identity on an unfamiliar domain reads as phishing, and the tutor's own first
+  // name is not the student's data. Deriving it from `email` instead would leak the
+  // tutor's address handle to anyone holding a link, and hardcoding a name is wrong
+  // in a multi-user app. Null falls back to "your tutor".
+  displayName  String?
   createdAt    DateTime  @default(now())
   students     Student[]
   sessions     Session[]
+  submissions  Submission[]
 }
 
 model Student {
@@ -52,6 +59,7 @@ model Student {
   // up in Past students the same as anyone else, just segregated, never suppressed.
   archived       Boolean  @default(false)
   sessions       Session[]
+  submissions    Submission[]
   createdAt      DateTime  @default(now())
 
   @@index([userId])
@@ -107,6 +115,24 @@ model Session {
   // storing, and a table would add a join for a nullable grouping key.
   seriesId      String?
   googleEventId String?  @unique
+  // --- Student practice link (app/w/[[...token]]) ---
+  // 256-bit bearer token, minted on Send, nulled on Revoke. The token is a CREDENTIAL,
+  // never the identity: it resolves to a session and thence to a studentId, which is
+  // what every submission is keyed by. That is what makes adding real student accounts
+  // later purely additive.
+  shareToken    String?  @unique
+  // Set on Send and deliberately NOT cleared on Revoke: "sent five days ago, nothing
+  // back" is the completion signal this whole feature exists to produce, and it has to
+  // survive the tutor turning the link off. Also the expiry anchor — NOT session.start,
+  // which the calendar mutates on every drag-to-reschedule.
+  sentAt        DateTime?
+  // The problem set FROZEN at Send. Serving and grading read this, never `problems`.
+  // Two paths rewrite `problems` after a link is live (/api/generate, and the
+  // module-level generation store that survives navigation), and countForTier is
+  // deterministic so a replacement set has the SAME LENGTH — without a frozen copy,
+  // answers get graded against different problems with no error and no log.
+  sentSet       Json?
+  submission    Submission?
   createdAt     DateTime @default(now())
 
   @@index([userId])
@@ -116,4 +142,34 @@ model Session {
   // Every session query is userId + a start range (calendar, dashboard, ledger);
   // the single-column start index can't serve the userId predicate.
   @@index([userId, start])
+}
+
+// One student's work on one session's practice set. Accumulates as they go — there is
+// no submit button; each problem is committed on its own the moment it is checked.
+//
+// Keyed by studentId, never by the token: the link is a credential that resolves to a
+// student, so when real student accounts land they become a second way to authenticate
+// as the same studentId and every historical row is already attributed correctly.
+model Submission {
+  id         String   @id @default(cuid())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  student    Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId  String
+  session    Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId  String   @unique
+  // [{ index, attempts: string[], verdict, revealedAt, formatFallback? }] — one entry
+  // per COMMITTED problem, appended as the student works.
+  results    Json
+  // Optimistic concurrency. `results` is a Json column, so every commit is a
+  // read-modify-write with no atomicity under Read Committed: without a compare-and-swap
+  // on this counter, N parallel requests all read the same prior array and one write
+  // survives — which silently defeats the per-problem attempt cap (fire 50 guesses at
+  // one index and spend one attempt) and loses work when two tabs are open.
+  version    Int      @default(0)
+  startedAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId])
+  @@index([studentId])
 }

@@ -54,13 +54,16 @@ type FileOpts = { startIso: string; studentName: string; topic?: string };
 // Shared print-window plumbing: write the doc, wait for the KaTeX stylesheet, print.
 // The document title becomes the suggested filename. Returns false if the pop-up was
 // blocked so the caller can surface a "allow pop-ups" hint.
-function printDoc(filename: string, bodyHtml: string): boolean {
-  // Match the installed katex version for the print window's stylesheet.
+// The document both the print path and the saved-file path share. `extraCss` lets the
+// student copy add its own rules without the print copy inheriting them.
+function docHtml(filename: string, bodyHtml: string, extraCss = ""): string {
+  // Match the installed katex version for the stylesheet.
   const katexCss = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
-  const html = `<!doctype html>
+  return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${escapeHtml(filename)}</title>
   <link rel="stylesheet" href="${katexCss}" />
   <style>
@@ -81,23 +84,51 @@ function printDoc(filename: string, bodyHtml: string): boolean {
     pre.code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px;
                background: #f6f6f6; border: 1px solid #ddd; border-radius: 4px;
                padding: 8px; white-space: pre-wrap; word-break: break-word; margin: 6px 0; }
+${extraCss}
   </style>
 </head>
 <body>
   ${bodyHtml}
 </body>
 </html>`;
+}
 
+// Shared print-window plumbing: write the doc, wait for the KaTeX stylesheet, print.
+// The document title becomes the suggested filename. Returns false if the pop-up was
+// blocked so the caller can surface a "allow pop-ups" hint.
+function printDoc(filename: string, bodyHtml: string): boolean {
   const win = window.open("", "_blank");
   if (!win) return false;
   win.document.open();
-  win.document.write(html);
+  win.document.write(docHtml(filename, bodyHtml));
   win.document.close();
   win.onload = () => {
     win.focus();
     win.print();
   };
   return true;
+}
+
+// Save a real .html file the tutor can hand over, rather than opening a print dialog.
+// A printed page can't hide an answer until it's asked for; a file can.
+function saveHtml(filename: string, bodyHtml: string, extraCss: string): boolean {
+  try {
+    const blob = new Blob([docHtml(filename, bodyHtml, extraCss)], {
+      type: "text/html;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${filename}.html`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoke on the next tick — revoking synchronously races the download in Safari.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Problems → a student worksheet (questions only) followed by a tutor answer key
@@ -136,6 +167,67 @@ export function downloadProblemsPdf(problems: Problem[], opts: FileOpts): boolea
     ${key}`;
 
   return printDoc(filename, body);
+}
+
+// The student copy: a real .html file, one problem per block, with the answer AND the
+// worked solution behind a native <details> the student opens only after committing.
+//
+// Why this is a THIRD export rather than a flag on the PDF path: printDoc opens a print
+// dialog, and a printed page cannot hide anything — the existing exports put the full
+// answer key one page-break from the questions, so handing one to a student hands them
+// every solution. A questions-ONLY copy would be worse still: a student who can check
+// their work is markedly likelier to do it (that is why the textbook wins), so
+// withholding answers entirely tests the least motivating version of the idea. Answers
+// stay available; only the read-the-method-before-trying shortcut is gated.
+//
+// <details> rather than script: no JS, works offline, survives being emailed. KaTeX CSS
+// still loads from a CDN, so math needs a connection to render.
+export function downloadStudentHtml(problems: Problem[], opts: FileOpts): boolean {
+  if (problems.length === 0) return false;
+  const filename = problemsFilename(opts.startIso, opts.studentName, "-practice");
+
+  const items = problems
+    .map((p, i) => {
+      const answer = hasText(p.answer)
+        ? `<div class="answer"><span class="k">Answer: </span><span class="${
+            hasMath(p.answer) ? "mono" : ""
+          }">${renderRich(p.answer)}</span></div>`
+        : "";
+      return `
+      <div class="item">
+        <div class="label">Problem ${i + 1}</div>
+        <div class="body">${renderRich(p.problem)}</div>
+        <details>
+          <summary>Show answer</summary>
+          <div class="reveal">
+            ${answer}
+            <div class="body">${renderRich(p.solution)}</div>
+          </div>
+        </details>
+      </div>`;
+    })
+    .join("");
+
+  const topicLine = hasText(opts.topic) ? `<p class="lede">On ${escapeHtml(opts.topic)}.</p>` : "";
+
+  const body = `
+    <h1>Practice set</h1>
+    ${topicLine}
+    <p class="lede">Work each one out first, then open <em>Show answer</em> to check.
+    Opening it before you have tried is the one thing that makes this useless.</p>
+    ${items}`;
+
+  const extraCss = `
+    body { max-width: 46rem; margin: 32px auto; padding: 0 20px; }
+    .lede { color: #555; font-size: 14px; margin: 0 0 8px; }
+    .item { margin: 0 0 28px; padding-bottom: 20px; border-bottom: 1px solid #eee; }
+    details { margin-top: 10px; }
+    summary { cursor: pointer; font-family: system-ui, sans-serif; font-size: 13px;
+              font-weight: 600; color: #4338ca; padding: 8px 0; }
+    .reveal { border-left: 3px solid #eee; padding: 4px 0 4px 14px; margin-top: 6px; }
+    @media (max-width: 640px) { body { margin: 20px auto; font-size: 17px; } }`;
+
+  return saveHtml(filename, body, extraCss);
 }
 
 // Lesson → a student worksheet (title, objectives, explanation, worked-example

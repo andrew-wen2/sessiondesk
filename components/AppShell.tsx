@@ -27,8 +27,16 @@ const LINKS = [
   { href: "/students", label: "Students", Icon: Users },
 ] as const;
 
-// Auth pages render bare — there is no session yet, so there is nothing to navigate.
-const BARE_PATHS = ["/login", "/register"];
+// Pages that render with no navigation. Auth pages, because there is no session yet and
+// nothing to navigate to — and `/w/*`, the student practice link, where the reader has no
+// account at all and rendering the tutor's sidebar would hand them Dashboard, Students and
+// a Sign out button.
+//
+// PREFIX matched, not exact: `/w/<token>` is dynamic and cannot be listed literally, which
+// is what the old `.includes(pathname)` required. Safe for every existing route — nothing
+// starts with `/w`, and `"/week".startsWith("/w/")` is false, so only `/w` and `/w/...`
+// match.
+const BARE_PREFIXES = ["/login", "/register", "/w"];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -56,7 +64,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     router.refresh();
   }
 
-  if (BARE_PATHS.includes(pathname)) return <>{children}</>;
+  if (BARE_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/")))
+    return <>{children}</>;
 
   return (
     <div className="min-h-screen">

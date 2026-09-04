@@ -6,6 +6,7 @@ import type { Problem } from "@/components/ProblemSet";
 import type { Lesson } from "@/lib/types";
 import { isGcalConnected } from "@/lib/gcal-account";
 import { normalizeStatus } from "@/lib/session-status";
+import { MAX_ATTEMPTS, linkExpiresAt, linkState, progressSummary, type StoredResult } from "@/lib/worksheet";
 
 // Session detail. Server shell: loads the session + student and hands a
 // serializable object to the interactive client component.
@@ -29,7 +30,7 @@ export default async function SessionPage({
   const row = await prisma.session
     .findFirstOrThrow({
       where: { id, userId },
-      include: { student: true },
+      include: { student: true, submission: { select: { results: true, updatedAt: true } } },
     })
     .catch(() => null);
 
@@ -63,6 +64,33 @@ export default async function SessionPage({
       id: row.student.id,
       name: row.student.name,
     },
+    practice: (() => {
+      const state = linkState(row, new Date());
+      const results = (row.submission?.results ?? []) as unknown as StoredResult[];
+      // Progress is measured against the set that was SENT, never the live `problems` —
+      // results[].index points into sentSet, and a regenerate would silently re-anchor
+      // "missed 3, 7, 9" onto different problems.
+      const sent = (row.sentSet as unknown as Problem[] | null) ?? null;
+      const progress = sent ? progressSummary(sent, results, MAX_ATTEMPTS) : null;
+      return {
+        shareToken: row.shareToken,
+        sentAtIso: row.sentAt?.toISOString() ?? null,
+        expiresOnIso: row.sentAt ? linkExpiresAt(row.sentAt).toISOString() : null,
+        expired: state === "expired",
+        hasSubmission: Boolean(row.submission),
+        // Derived from "now" HERE, once, because PracticeShare hydrates — a clock read
+        // on both sides of that boundary renders two different strings. "Started but
+        // untouched for a day" is the abandonment signal; a bare timestamp isn't.
+        stalled: Boolean(
+          progress &&
+            progress.checked > 0 &&
+            progress.checked < progress.total &&
+            row.submission &&
+            Date.now() - row.submission.updatedAt.getTime() > 86_400_000
+        ),
+        progress,
+      };
+    })(),
   };
 
   return (

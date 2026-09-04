@@ -6,9 +6,10 @@ import { useRouter } from "next/navigation";
 import { pad, formatSessionDate } from "@/lib/format";
 import { SaveIndicator, type SaveStatus } from "./SaveIndicator";
 import ProblemSet, { type Problem } from "./ProblemSet";
+import PracticeShare from "./PracticeShare";
 import LessonView from "./LessonView";
 import type { Lesson } from "@/lib/types";
-import { downloadProblemsPdf, downloadLessonPdf } from "@/lib/download-problems";
+import { downloadProblemsPdf, downloadLessonPdf, downloadStudentHtml } from "@/lib/download-problems";
 import { downloadProblemsDocx, downloadLessonDocx } from "@/lib/download-docx";
 import { startGeneration, useGeneration, startLessonGeneration, useLessonGeneration } from "@/lib/generation-store";
 import {
@@ -88,6 +89,20 @@ export type SessionDetailData = {
     id: string;
     name: string;
   };
+  // Student practice link. Computed server-side (lib/worksheet.ts imports node:crypto,
+  // so it must never reach a client bundle) and handed down as plain data.
+  practice: PracticeState;
+};
+
+export type PracticeState = {
+  shareToken: string | null;
+  sentAtIso: string | null;
+  expiresOnIso: string | null;
+  expired: boolean;
+  hasSubmission: boolean;
+  /** Derived from "now" on the SERVER only — this component hydrates, so it must not read a clock. */
+  stalled: boolean;
+  progress: { total: number; checked: number; right: number; missed: number[]; secondTry: number } | null;
 };
 
 export default function SessionDetail({
@@ -171,6 +186,9 @@ export default function SessionDetail({
 
   // Generation lives in a module-level store keyed by session id, so it keeps
   // running (and its result is recovered) when you navigate away and return.
+  // A live link or any submitted work locks regeneration — see the Regenerate button.
+  const practiceLocked = Boolean(session.practice.shareToken || session.practice.hasSubmission);
+
   const gen = useGeneration(id);
   const generating = gen.status === "generating";
   const genError = gen.status === "error" ? gen.error : null;
@@ -286,6 +304,7 @@ export default function SessionDetail({
   // tutor answer key. Monospace-vs-prose answer styling is detected per item there.
   const POPUP_ERR = "Couldn't open the print window — allow pop-ups and retry.";
   const DOCX_ERR = "Couldn't build the Word file — try again.";
+  const HTML_ERR = "Couldn't build the practice file — try again.";
   const fileOpts = () => ({
     startIso,
     studentName: session.student.name,
@@ -299,6 +318,12 @@ export default function SessionDetail({
   async function problemsDocx() {
     setDownloadError(null);
     if (!(await downloadProblemsDocx(problems, fileOpts()))) setDownloadError(DOCX_ERR);
+  }
+  // The one export that is safe to hand a student: answers and solutions sit behind a
+  // per-problem toggle instead of on the next page.
+  function problemsStudent() {
+    setDownloadError(null);
+    if (!downloadStudentHtml(problems, fileOpts())) setDownloadError(HTML_ERR);
   }
   function lessonPdf() {
     if (!lesson) return;
@@ -650,8 +675,25 @@ export default function SessionDetail({
           title="Practice problems"
           action={
             <>
-              {problems.length > 0 && <DownloadGroup onPdf={problemsPdf} onDocx={problemsDocx} />}
-              <Button size="sm" onClick={generate} loading={generating}>
+              {problems.length > 0 && (
+                <DownloadGroup onPdf={problemsPdf} onDocx={problemsDocx} onStudent={problemsStudent} />
+              )}
+              <Button
+                size="sm"
+                onClick={generate}
+                loading={generating}
+                // Blocked once a link is live OR any work exists. results[].index points
+                // into the frozen sentSet, and countForTier is deterministic — a
+                // replacement set has the SAME length, so nothing would error; the
+                // student's answers would just silently describe different problems.
+                // Turning the link off is not enough on its own once they have started.
+                disabled={practiceLocked}
+                title={
+                  practiceLocked
+                    ? "Turn off the link first — regenerating would re-anchor the student's answers to different problems."
+                    : undefined
+                }
+              >
                 {!generating && <Sparkles className="h-3.5 w-3.5" />}
                 {generating
                   ? "Generating…"
@@ -665,6 +707,11 @@ export default function SessionDetail({
         <CardBody className="space-y-3">
           {genError && <ErrorLine>{genError}</ErrorLine>}
           {downloadError && <ErrorLine>{downloadError}</ErrorLine>}
+          <PracticeShare
+            sessionId={id}
+            practice={session.practice}
+            hasProblems={problems.length > 0}
+          />
           {problems.length > 0 ? (
             <ProblemSet problems={problems} />
           ) : (
@@ -734,7 +781,17 @@ export default function SessionDetail({
 // Both generated artefacts offer the same two formats. One control, so PDF and Word
 // read as two halves of "download" rather than two more buttons competing with
 // Generate — which is the action that matters on this page.
-function DownloadGroup({ onPdf, onDocx }: { onPdf: () => void; onDocx: () => void }) {
+function DownloadGroup({
+  onPdf,
+  onDocx,
+  onStudent,
+}: {
+  onPdf: () => void;
+  onDocx: () => void;
+  // Problems only. A lesson has no answers to withhold, so there is nothing for a
+  // student copy to do differently.
+  onStudent?: () => void;
+}) {
   return (
     <span className="inline-flex h-8 items-center gap-1.5 rounded-control border border-hairline bg-sunken px-2.5 text-sm">
       <Download className="h-3.5 w-3.5 text-muted" />
@@ -753,6 +810,20 @@ function DownloadGroup({ onPdf, onDocx }: { onPdf: () => void; onDocx: () => voi
       >
         Word
       </button>
+      {onStudent && (
+        <>
+          <span className="text-hairline-strong" aria-hidden>
+            ·
+          </span>
+          <button
+            onClick={onStudent}
+            title="Answers and solutions hidden behind a per-problem toggle"
+            className="cursor-pointer font-medium text-primary underline-offset-2 transition-colors duration-150 hover:underline"
+          >
+            Student copy
+          </button>
+        </>
+      )}
     </span>
   );
 }

@@ -37,17 +37,32 @@ is untested, cannot be tested by writing code, and is the first gate in the plan
 
 ## Status Quo
 
-**Outbound delivery already exists and goes unused.** `components/SessionDetail.tsx:653`
-renders a `DownloadGroup` (PDF + DOCX). `lib/download-problems.ts:103` splits the export
-correctly: *"a student worksheet (questions only) followed by a tutor answer key."*
-A worksheet can be handed to a student today.
+**There is no student-handable export.** `components/SessionDetail.tsx:653` renders a
+`DownloadGroup` (PDF + DOCX), and an earlier draft of this document read
+`lib/download-problems.ts:103` — *"a student worksheet (questions only) followed by a
+tutor answer key"* — as describing two artifacts. It describes two **sections of one
+file**. `downloadProblemsPdf` (line 105) emits `Worksheet` → page break → `Answer key`
+with answers and full solutions; `downloadProblemsDocx` (`download-docx.ts:133`) does the
+same. Handing a student today's export hands them every solution.
 
-It isn't, because **nothing comes back from a .docx.** The textbook wins on the return
-path: it has an answer key the student can check themselves. Generated problems have
-neither self-check nor reporting.
+So the diagnosis has two live branches and only one has been tested:
 
-The blocker is the inbound half, not the outbound half. This corrected the initial
-framing ("no way to deliver it") and shrank the build considerably.
+- **Branch A — outbound is the blocker.** There has never been a *well-shaped* artifact.
+  The tutor could have sent today's export, but it carries every solution one page-break
+  from the questions. A two-flag change (`includeAnswers` / `includeSolutions`) produces
+  the right one and tests this for ~20 lines.
+- **Branch B — the return path is the blocker.** Even given a worksheet, nothing comes
+  back, so the textbook wins.
+
+**Branch B is what this design builds for, and it is an inference, not an observation.**
+Branch A is strictly cheaper and must be ruled out first; that is gate 1 of the plan.
+
+**The student copy must include the answer key.** A student who can check their work is
+markedly more likely to do it — that is exactly why the textbook wins. A questions-only sheet is *strictly worse than the textbook* on the one axis that
+makes a teenager finish it, so testing branch A with one would be testing the least
+motivating version and misreading the null result as evidence about delivery. Answers let
+them self-check; solutions let them read the method before trying, which is the part worth
+withholding.
 
 ## Target User & Narrowest Wedge
 
@@ -61,13 +76,18 @@ Two reasons, aligned:
    runs the model path with zero anchors.
 2. They are the profile that does optional math voluntarily. A scoreboard exists.
 
-**Wedge:** one problem set per booked session, delivered as a link, answers typed back,
-graded server-side, results visible to the tutor before the next session.
+**Wedge:** one problem set per booked session, delivered as a link. The student works
+**one problem at a time** — answer, get told right or wrong, see the worked solution, move
+on — with attempts capped so the reveal is earned. Results are visible to the tutor before
+the next session.
 
 **Out of v1:** readings (content storage — the book/PDF library was built and
 deliberately removed), non-contest subjects, student accounts, multiple sets per session,
-retries, spaced repetition, instant per-problem feedback, a calendar-level "needs a set"
-indicator.
+retries after reveal, spaced repetition, a calendar-level "needs a set" indicator.
+
+*(An earlier draft listed "instant per-problem feedback" here. It is now the core of the
+design — see premise 1. A plan that claimed reveal was the value proposition while
+forbidding reveal was the contradiction that `/autoplan` run 2 resolved.)*
 
 ## This overrides a stated non-goal
 
@@ -86,9 +106,19 @@ additive. Real surface reduction. Not zero.
 
 ## Premises
 
-1. **The customer is the tutor.** Success = the tutor gains completion visibility.
-   Student satisfaction is the means.
-2. **The return path is the blocker.** Outbound delivery already ships.
+1. **The tutor is the buyer; the student now has a real reason too.** *(Amended — the
+   original premise said "the customer is the tutor, student satisfaction is the means,"
+   which could never answer why a teenager would open this twice.)*
+
+   Success still = the tutor gains completion visibility. But the student-side value is
+   **commit-then-reveal**: type your answer, *then* find out if it's right, then see the
+   worked solution. A worksheet with an answer key lets a student check — and also lets
+   them read the answer before trying, which is the version that teaches nothing. Software
+   can require the answer first. The enforcement is a difference of degree rather than
+   kind (a paper key can be folded under, or sealed on a later page), but it is the
+   difference between an affordance a tired 15-year-old has to resist and one they don't.
+2. **The return path is the blocker.** *(UNVERIFIED — the weakest premise here. Outbound
+   does NOT ship in usable form; see Status Quo. Branch A must be ruled out first.)*
 3. **Contest students only in v1.**
 4. **No student accounts in v1** — bearer-token links, with the non-goal override above
    stated rather than argued away. Accounts are explicitly wanted later.
@@ -96,11 +126,27 @@ additive. Real surface reduction. Not zero.
    creation fires generation" — is infeasible; see below. The tutor generates with the
    existing button, reviews what's on screen, then sends. The review between the two
    clicks is the quality gate.)*
-6. **AoPS Alcumus substitutes for the content layer only.** It is contest-grade, free,
-   and adaptive — and gives the tutor nothing: no assignment, no visibility, no
-   continuity with what was covered Tuesday. DeltaMath is not a comparison; it does not
-   do competition math. Every practice platform in this space builds for the student as
-   buyer. In 1:1 tutoring the tutor is the buyer and the one flying blind.
+6. **The moat is the generator, not the assign-and-report loop.** *(Narrowed after
+   review — the earlier version of this premise was over-claimed.)*
+
+   An earlier version of this premise claimed *"nobody builds for the tutor."* That is
+   false. DeltaMath's teacher side, Khan Academy teacher assignments, IXL, Edulastic and
+   Google Classroom all do assign → student submits → teacher sees per-item results. So
+   does every LMS quiz. The assign-and-report loop is a commodity, and so is
+   commit-then-reveal on its own.
+
+   **Google Forms deserves a named answer and did not get one.** It auto-grades, reports
+   per-item, is free, needs no build, no second auth model, no token in access logs, and
+   students already have accounts. It beats this v1 on every axis except two: it cannot
+   render LaTeX, and it cannot feed results back into `session.topic`.
+
+   So the defensible claim is narrow, and it is three things stacked: **corpus-anchored
+   competition-math generation calibrated to one student's profile and last session's
+   topic — delivered with commit-then-reveal, and with the results returning to that same
+   timeline.** Forms auto-grades but cannot render LaTeX or write back to `session.topic`.
+   General practice platforms have the loop but no connection to what this tutor covered
+   on Tuesday. Everything outside that stack is commodity, which means v1 should be the
+   smallest thing that proves it.
 
 ### Why generation cannot fire on booking
 
@@ -198,8 +244,7 @@ session:
 - You said **"DeltaMath doesn't do competition math."** Five words, and it killed my
   comparison outright. I'd anchored on the wrong incumbent and you corrected it from
   domain knowledge, not from argument. That correction surfaced the actual insight —
-  Alcumus and DeltaMath both build for the student as buyer, and nobody builds for the
-  tutor.
+  practice platforms build for the student as buyer, and the tutor-facing half is thin.
 
 - You rejected the same question three times rather than picking a nearest-fit answer.
   Most people take the closest option to move on. Each rejection was hiding a real
