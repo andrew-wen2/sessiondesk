@@ -3,7 +3,7 @@
 [![CI](https://github.com/andrew-wen2/tutor-app/actions/workflows/ci.yml/badge.svg)](https://github.com/andrew-wen2/tutor-app/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A tutoring session manager — calendar, student roster, payments, and calibrated LLM-generated practice problems. Runs a real tutoring business: 15+ students, $75–120/hr, $5,000+ in tracked revenue.
+A tutoring session manager — calendar, student roster, payments, and calibrated LLM-generated practice problems. Runs a real tutoring business.
 
 ## Features
 
