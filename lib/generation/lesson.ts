@@ -11,7 +11,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Lesson } from "@/lib/types";
 import type { GenerationPlan } from "@/lib/generation/plan";
 import { callGeminiWithRetry, geminiClient } from "@/lib/generation/gemini-call";
-import { providerForStage, geminiModelFor } from "@/lib/generation/config";
+import { providerForStage, geminiModelFor, anthropicModelFor } from "@/lib/generation/config";
 
 export type LessonInput = {
   profile: string; // the student's free-text profile (subject + level + goals)
@@ -153,7 +153,7 @@ export async function generateLesson(opts: {
   // Lessons favor quality regardless of tier — a teaching artifact for a beginner is
   // not a cheaper job than one for an advanced student — so this stays on the mid
   // (Sonnet) model rather than following plan.tier down to Haiku. Env-overridable.
-  const model = process.env.GENERATION_MODEL ?? process.env.GENERATION_MODEL_MID ?? "claude-sonnet-4-6";
+  const model = anthropicModelFor("lesson");
   const { system, user } = buildLessonPrompt(input);
   console.log(
     `[/api/generate-lesson] plan=${input.plan.source} domain="${input.plan.domain}" tier=${input.plan.tier} model=${model}`

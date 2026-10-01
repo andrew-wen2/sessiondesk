@@ -73,18 +73,21 @@
   },
   {
     "id": "spanish-1",
+    "cohort": "mid",
     "profile": "Spanish II, intermediate, working on verb conjugation and vocabulary",
     "topic": "preterite vs imperfect tense",
     "recentTopics": ["regular present-tense conjugation"]
   },
   {
     "id": "spanish-2",
+    "cohort": "easy",
     "profile": "Spanish I, beginner, building basic vocabulary and sentence structure",
     "topic": "everyday vocabulary — food and family",
     "recentTopics": []
   },
   {
     "id": "history-open-1",
+    "cohort": "mid",
     "profile": "AP US History, advanced, preparing for the DBQ essay format",
     "topic": "causes of the American Revolution",
     "recentTopics": ["colonial economics"]

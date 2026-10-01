@@ -36,6 +36,11 @@ export type GenerationInput = {
   // a per-chunk angle breaks the tie. Ignored when anchors are present, since the
   // anchors already differentiate the chunks.
   chunkIndex?: number;
+  // Cascade pipeline: this call writes ONE problem of a larger set, generated
+  // independently of its siblings. `index`/`of` place it on the set's easy→hard ramp,
+  // `hint` is what distinguishes it from the others (a sub-skill, or "transform the
+  // seed below"). Absent on the legacy chunked path.
+  slot?: { index: number; of: number; hint: string };
 };
 
 // Per-competition difficulty rubric. The structure + number-band semantics are the
@@ -67,7 +72,7 @@ export const ANSWER_FORMAT_RULES: Record<AnswerFormat, string> = {
 // free-response, so strip that list before injecting an anchor — otherwise the model
 // is shown multiple-choice formatting to mimic. Conservative: only cut when a full
 // span from (A) (or \textbf{(A)}) through (E) is present; otherwise leave untouched.
-function stripChoices(statement: string): string {
+export function stripChoices(statement: string): string {
   const m = statement.match(/(?:\$?\s*\\textbf\s*\{\s*)?\(\s*A\s*\)[\s\S]*\(\s*E\s*\)/i);
   // Drop a dangling math delimiter left over from a "$\textbf{(A)} …" choice block.
   return m && m.index != null ? statement.slice(0, m.index).replace(/\$\s*$/, "").trim() : statement;
@@ -98,8 +103,22 @@ const CHUNK_ANGLES = [
   "an unfamiliar or applied context the student has to unpack first",
 ];
 
+// Cascade slot hints: what distinguishes one separately-written problem from its
+// siblings. Kept here with the rest of the prompt text.
+export function slotHintForSubtopic(subtopic: string): string {
+  return `the sub-skill "${subtopic}"`;
+}
+
+export function slotHintForAngle(index: number): string {
+  return CHUNK_ANGLES[index % CHUNK_ANGLES.length];
+}
+
+export function slotHintForSeed(label: string): string {
+  return `transform the seed problem below (${label}) into an isomorphic variant`;
+}
+
 export function buildPrompt(input: GenerationInput): { system: string; user: string } {
-  const { plan, profile, topic, count, recentTopics, anchors, mode = "scratch", avoidStatements, chunkIndex } =
+  const { plan, profile, topic, count, recentTopics, anchors, mode = "scratch", avoidStatements, chunkIndex, slot } =
     input;
   const { competition, bandLow, bandHigh } = plan;
   // Adapt only applies on the variant path AND only when the seeds actually carry
@@ -247,9 +266,15 @@ Solve each problem efficiently — reason just enough to reach a correct answer 
       ? `\nAlready-rejected variants — each of these earlier attempts was TOO CLOSE to a seed (it reused a seed's distinctive numbers or its structure/wording). Do NOT reproduce any of them or anything resembling them. For every problem you now generate, diverge much further from the seeds: change the structural parameter (a modulus, a size, the number of constraints or cases), use entirely different specific numbers, and a different surface domain.\n${avoidList}\n`
       : `\nProblems already in this set — do NOT repeat any of them, and do NOT produce a variation that tests the same thing in the same way. Each new problem must exercise a different sub-skill, a different configuration, or a different context.\n${avoidList}\n`;
 
+  // One problem of a set written in parallel: say where it sits on the ramp and what
+  // it should focus on, since this call can't see its siblings.
+  const slotBlock = slot
+    ? `\nThis request is for ONE problem: problem ${slot.index + 1} of a ${slot.of}-problem set whose other problems are being written separately. Pitch its difficulty for position ${slot.index + 1} of ${slot.of} in an easiest-to-hardest set. Focus for this problem: ${slot.hint}.\n`
+    : "";
+
   // Per-chunk angle: only when nothing else distinguishes the parallel chunks.
   const angleBlock =
-    !anchors?.length && chunkIndex != null
+    !slot && !anchors?.length && chunkIndex != null
       ? `\nFor this batch specifically, lean toward ${CHUNK_ANGLES[chunkIndex % CHUNK_ANGLES.length]}. Stay within the calibrated difficulty — this changes the flavour of the problems, not their level.\n`
       : "";
 
@@ -258,8 +283,125 @@ Solve each problem efficiently — reason just enough to reach a correct answer 
 - Today's topic: ${topic || "(not specified — use the profile to choose appropriate problems)"}
 
 ${historyBlock}
-${anchorBlock}${avoidBlock}${angleBlock}
+${anchorBlock}${avoidBlock}${slotBlock}${angleBlock}
 Generate exactly ${count} fully-solved problem(s) — not fewer, ordered easiest to hardest. You MUST call the emit_problems tool with all ${count} problems (one entry per problem) and return NOTHING else — no prose, no problems written in the message text; every problem goes in the tool call.`;
+
+  return { system, user };
+}
+
+// --- Construct-first single problem (eval: scripts/eval-solve-first.ts) ------
+// One problem, built BACKWARD from an answer the writer picks first; the answer goes
+// in a private field and independent solvers answer the statement blind. Unlike
+// buildPrompt it asks for no answer/solution fields at all: under buildPrompt plus an
+// "ignore the solution fields" override, a thinking writer spent a third of its calls
+// reworking constructions until it ran out of time or tokens. So the procedure is
+// bounded: one construction, one forward check, and new values instead of repairs.
+// The program language for code-computed answers (lib/generation/answer-check.ts).
+// Shared by the writer's own answerCheck and the blind program solver, so the two can
+// never describe a different subset from the one the sandbox accepts.
+export const ANSWER_PROGRAM_LANGUAGE = `Write it in the mathjs expression language: statements separated by ";" or new lines, the last line's value is the answer. Allowed: numbers, + - * / ^, comparisons, "and"/"or"/"not", "c ? a : b", variables ("a = 3"), your own functions ("f(n) = mod(n, 7) == 3"), inclusive integer ranges ("1:100"), arrays ("[2, 3, 5]", indexed from 1), and these functions: abs sqrt cbrt nthRoot pow exp log floor ceil round mod gcd lcm max min sum prod mean median factorial combinations permutations isPrime isInteger map filter size count sort setDistinct polynomialRoot lusolve det fraction sin cos tan atan2 hypot. Define functions only as "f(x) = ..." (no "->" lambdas), no comments, no recursion, and no loops other than map/filter over ranges; enumerate at most about a million values. Example for "how many integers from 1 to 500 are divisible by 3 or 7": "f(n) = mod(n, 3) == 0 or mod(n, 7) == 0; size(filter(1:500, f))". If the answer is not a single number, or cannot be computed this way, write "none".`;
+
+const METHOD_FIELD = `one line naming the key idea and the solution steps, with no numbers, e.g. "set up two linear equations from the totals, eliminate one unknown"`;
+const SOLUTION_FIELD = "a short forward solution a student can follow, 3–6 lines, written from your construction and ending with a line that states that same answer";
+
+export type ConstructTarget = {
+  number: number; // the contest position this problem should play like
+  reference?: Anchor; // a real problem at that position, shown for difficulty only
+};
+
+export function buildConstructPrompt(
+  input: Omit<GenerationInput, "count" | "mode" | "adapt" | "chunkIndex"> & {
+    // "construct": the eval's emit_problem (problem + private intended answer +
+    // construction note). "problems": the cascade writers' emit_problems, with a
+    // student-facing solution written forward from the construction.
+    output?: "construct" | "problems";
+    target?: ConstructTarget;
+    // Problems this student worked in recent sessions: never reused across sessions.
+    seenStatements?: string[];
+    // "problems" output only: also write the answerCheck program. Only for writers that
+    // reason in a thinking block (Anthropic); others leak the check into the solution.
+    answerCheck?: boolean;
+    // Seeded slot (cascade/seed-slots.ts): a real in-band problem to build a variant of.
+    // The variant keeps the seed's idea and difficulty and changes everything a student
+    // could look up. Replaces the difficulty-only reference.
+    seed?: Anchor;
+  }
+): { system: string; user: string } {
+  const { plan, profile, topic, recentTopics, anchors, avoidStatements, slot, output = "construct", target, seenStatements, answerCheck = false, seed } = input;
+  const { competition, bandLow, bandHigh } = plan;
+  const routine = competition ? bandRegister(competition, bandHigh) === "routine" : plan.tier === "easy";
+  const hasBand = competition && bandLow != null && bandHigh != null;
+
+  // With a per-slot target the band only frames the student; the target is what this
+  // one problem must hit. Without one, fall back to the band as a whole.
+  const seedLabel = seed ? `${seed.source}${seed.number != null ? ` #${seed.number}` : ""}` : "";
+  const band = !hasBand
+    ? ""
+    : seed
+      ? `\nThe student works at ${competition} #${bandLow}–${bandHigh}. THIS problem must be exactly as hard as the real ${seedLabel} below, which real students found as hard as a problem in that range.\n`
+      : target
+      ? `\nThe student works at ${competition} #${bandLow}–${bandHigh}. THIS problem's target is ${competition} #${target.number}: make it play like a real #${target.number}, not like either end of the range.\n`
+      : `\nTarget difficulty: ${competition} problems ${bandLow}–${bandHigh}. ${routine ? "These are early, routine problems: one main idea, finished in a couple of minutes. Do not inflate them." : `Sit at the hard end of this band: multi-step reasoning with in-level ideas, as hard as a real #${bandHigh}.`}\n`;
+  const reference = seed
+    ? `\nBuild your problem as a variant of this real ${seedLabel}. Keep what makes it hard: its key idea, the insight a solver needs, and the number of reasoning steps. Change the story or setting, every given number, and at least one structural parameter (a count, a bound, a modulus, a dimension, a number of cases), so your answer differs from its answer and the original's solution can't simply be copied. Do not make it easier: remove no step and give nothing away. Write your statement in your own words.
+Real problem: ${stripChoices(seed.statement)}${seed.answer ? `\nIts answer: ${seed.answer}` : ""}${seed.solution ? `\nIts solution (for the idea only; never reuse its numbers):\n${seed.solution.slice(0, 2000)}` : ""}\n`
+    : target?.reference
+    ? `\nA real ${target.reference.source} #${target.reference.number ?? target.number}, shown ONLY so you can feel the difficulty. Do not reuse its topic, setup, wording, or numbers; today's topic decides what your problem is about:\n${stripChoices(target.reference.statement)}\n`
+    : !target && anchors && anchors.length > 0
+      ? `\nReference problems at the target difficulty (match their level and style; do not copy or reskin them):\n${anchors
+          .map((a, i) => `${i + 1}. [${a.source}${a.number != null ? ` #${a.number}` : ""}] ${stripChoices(a.statement)}`)
+          .join("\n")}\n`
+      : "";
+
+  const difficultyField = `your estimate${competition ? `, e.g. "${competition} #${target?.number ?? bandHigh ?? 10}"` : ""}`;
+  const emit =
+    output === "problems"
+      ? answerCheck
+        ? `Call emit_problems with exactly one entry, filling the fields in this order: "problem" (the statement alone), "answer" (the answer you chose, answer only), "answerCheck" (your step-3 program), "method" (${METHOD_FIELD}), "solution" (${SOLUTION_FIELD}), and "difficulty" (${difficultyField}).
+The solution is written last, after the check has passed, so it is clean: a student reads it, so it never corrects itself, never says "wait", and never mentions the check.
+"answerCheck" is a short program that a computer runs to confirm the answer. It computes the answer FORWARD from the numbers in the statement, the way a solver would, and must not simply restate the answer you chose. ${ANSWER_PROGRAM_LANGUAGE}`
+        : `Call emit_problems with exactly one entry: "problem" (the statement alone), "answer" (the answer you chose, answer only), "method" (${METHOD_FIELD}), "solution" (${SOLUTION_FIELD}), and "difficulty" (${difficultyField}). Leave "answerCheck" out.`
+      : `Call emit_problem with: "problem" (the statement alone), "intended" (the answer you chose, answer only), and "construction" (at most two lines: the chosen values and how the givens were computed).`;
+  const tool = output === "problems" ? "emit_problems" : "emit_problem";
+
+  const system = `You write ONE ${competition ? "competition math/physics" : `${plan.domain ? `${plan.domain} ` : ""}`} practice problem for a one-on-one tutoring session. Build it backward from its answer, so the answer is known to be right before the problem exists.
+${plan.rubric ? `\n${plan.rubric}\n` : ""}${band}
+How to build it:
+1. Choose the final answer and every intermediate quantity a solver will find (how many of each item, the value of each unknown). Use clean values (integers or simple fractions) that meet the problem's natural constraints (whole-number counts, real solutions, positive lengths). Difficulty comes from the reasoning the problem needs, never from messy numbers.
+2. Compute every given number in the statement from those chosen values.
+3. Check once by solving your statement forward, and check the answer is unique: enough conditions to pin down every quantity the question depends on, and for "sum of all" or "how many" questions, every case counted.${output === "problems" && answerCheck ? ` Part of this check is writing the "answerCheck" program described below and making sure it gives your answer.` : ""}
+4. If the check fails, do not repair it. Choose new values or a simpler setup and repeat steps 1–3.
+Keep your reasoning short: one construction and one check. Do not polish the wording again and again.
+
+The problem must:
+- Match the target difficulty exactly${routine && !target ? "; if unsure, err simpler" : ""}. Use only terminology and techniques standard at the student's level.
+- Be one complete, self-contained, free-response statement: no title, hint, answer choices, figure or diagram reference, or commentary.
+- Have exactly one correct answer${competition ? "" : `. ${ANSWER_FORMAT_RULES[plan.answerFormat]}`}.
+- Use $...$ for inline LaTeX and $$...$$ for display. Write a currency sign as \\$.
+
+${emit}`;
+
+  const history =
+    recentTopics.length > 0
+      ? `Recent session topics (build on them, do not repeat them): ${recentTopics.join("; ")}`
+      : "No prior session history.";
+  const avoid =
+    avoidStatements && avoidStatements.length > 0
+      ? `\nProblems already in this set (test something different):\n${avoidStatements.map((s, i) => `${i + 1}. ${s.slice(0, 200)}`).join("\n")}\n`
+      : "";
+  const place = slot
+    ? `\nThis is problem ${slot.index + 1} of a ${slot.of}-problem set ordered easiest to hardest; pitch it for that position. Focus: ${slot.hint}.\n`
+    : "";
+  const seen =
+    seenStatements && seenStatements.length > 0
+      ? `\nProblems this student already worked in recent sessions. Do not reuse their setup, story, numbers or key trick:\n${seenStatements.map((s, i) => `${i + 1}. ${s.slice(0, 200)}`).join("\n")}\n`
+      : "";
+
+  const user = `Student profile: ${profile || "(not specified)"}${plan.domain ? `\nSubject: ${plan.domain}` : ""}
+Today's topic: ${topic || "(not specified; use the profile)"}
+${history}
+${reference}${avoid}${seen}${place}
+Write the problem and call ${tool}.`;
 
   return { system, user };
 }
@@ -386,17 +528,174 @@ export function buildSolvePrompt(args: {
   domain: string;
   rubric: string;
   answerFormat: AnswerFormat;
+  // Cascade cheap solvers only: also report any assumption the statement didn't justify.
+  // Solvers often notice a flaw mid-solution and answer anyway (MathTrap: 33–39% drops on
+  // flawed variants); a separate field turns that noticing into a veto.
+  flagAssumptions?: boolean;
 }): { system: string; user: string } {
-  const { problem, domain, rubric, answerFormat } = args;
+  const { problem, domain, rubric, answerFormat, flagAssumptions = false } = args;
   const system = `You are an expert solver working a practice problem cold — you have not seen it before and no proposed answer exists yet. Solve it completely and correctly.
 Subject: ${domain || "general"}. ${rubric ? `Calibration context (not part of the problem): ${rubric}` : ""}
 - Work the problem through fully before answering. Do not guess.
 - The "answer" field holds ONLY the final answer, no working. ${ANSWER_FORMAT_RULES[answerFormat]}
-- If the problem as stated is genuinely ill-posed, ambiguous, or unanswerable (not merely hard), set "ambiguous" to true and explain why in "note" — otherwise leave "ambiguous" false.
+- If the problem as stated is genuinely ill-posed, ambiguous, or unanswerable (not merely hard), set "ambiguous" to true and explain why in "note" — otherwise leave "ambiguous" false.${
+    flagAssumptions
+      ? `
+- If you had to ASSUME something the statement does not say to reach an answer (a missing quantity, an unstated condition, a choice between two readings), put that assumption in "assumed" in one line. Leave "assumed" empty when you needed nothing beyond the statement; standard conventions (real numbers, positive lengths, fair coins) are not assumptions.`
+      : ""
+  }
 - Math notation: $...$ for inline, $$...$$ for display.
 Call the emit_solve tool and return NOTHING else.`;
 
   const user = `Solve this problem:\n${problem}`;
 
+  return { system, user };
+}
+
+// Well-posedness check (cascade verify-cheap.ts). Separate from solving because two
+// solvers agreeing is not evidence a problem is well-posed: in an eval, both cheap
+// solvers answered a problem whose conditions had no real solution. It sees only the
+// statement, never an answer.
+export function buildValidityPrompt(args: { problem: string; domain: string; answerFormat: AnswerFormat }): {
+  system: string;
+  user: string;
+} {
+  const { problem, domain, answerFormat } = args;
+  // Staged, after MathQ-Verify (2025): list the conditions, then check them against each
+  // other, then check the goal. The decomposed check beat a single "is this valid?" by
+  // up to 25 F1 points, and only ~60% of LLM-written questions in its benchmark were valid.
+  const system = `You review a ${domain ? `${domain} ` : ""}practice problem before a student sees it. Decide only whether it is WELL-POSED, not how hard it is. Work in stages:
+1. "conditions": list every given condition and quantity, one short item each.
+2. "missing": anything a solver needs that is not given (empty string if nothing).
+3. "contradiction": any conditions that conflict, or that make the asked quantity impossible (counts that can't be whole, equations without the real solutions the problem assumes); empty string if none.
+4. "notUnique": whether the asked quantity has more than one value, or a case is unaccounted for; empty string if it is unique.
+5. "selfContained": false if it has answer choices or refers to a figure that isn't described.
+6. "wellPosed": true only when stages 2–4 are empty and stage 5 is true; "reason": one sentence, for false what exactly is wrong.
+Work it through as far as you need to decide, but do not write up a solution. The expected answer format is: ${ANSWER_FORMAT_RULES[answerFormat]}
+Call emit_validity with every field.`;
+  return { system, user: `Problem:\n${problem}` };
+}
+
+// Problem-type menu for one set (cascade problem-types.ts). Without it, a contest set's
+// slots differed only by a generic angle, and on a narrow topic the writer fell back to
+// a few favorite setups: two Opus sets on "linear and quadratic equations" shared a
+// word-for-word problem, and one set held three shared-root problems. Each slot gets
+// one of these types instead, so the set covers different ideas.
+//
+// Exclusion is by type NAME (excludedTypes, from buildRecentTypesPrompt), not by raw
+// problems: asked to infer and avoid the types of 20 raw problems with thinking off, the
+// model echoed them back as the list; with thinking on it took 53s.
+export function buildProblemTypesPrompt(args: {
+  domain: string;
+  competition: string | null;
+  bandLow: number | null;
+  bandHigh: number | null;
+  profile: string;
+  topic: string;
+  excludedTypes: string[];
+  count: number;
+}): { system: string; user: string } {
+  const { domain, competition, bandLow, bandHigh, profile, topic, excludedTypes, count } = args;
+  const level = competition && bandLow != null && bandHigh != null ? `${competition} problems #${bandLow}–${bandHigh}` : "the student's level";
+  const system = `You plan the variety of a ${domain ? `${domain} ` : ""}practice set for one student at ${level}.
+List ${count} distinct PROBLEM TYPES within today's topic. A type names the kind of setup and the key idea a solver needs, in a short phrase, e.g. "work-rate: two agents, combined rate", "integer roots via Vieta and factor-pair casework", "revenue maximization from a linear demand model".
+- Every type must need a genuinely different idea or setup. Two stories with the same underlying trick are ONE type.
+- Stay inside today's topic and at the student's level. Order does not matter.
+- If excluded types are listed, list NONE of them, including the same type under a different name or story.
+- Include less obvious types as well as the common ones. For each, give "typicality": the probability (0 to 1) that a typical tutor's set on this topic would include that type.
+Call emit_types with the list.`;
+  const recent =
+    excludedTypes.length > 0
+      ? `\n\nEXCLUDED types (this student practiced them recently; list none of them):\n${excludedTypes.map((t) => `- ${t}`).join("\n")}`
+      : "";
+  const user = `Student profile: ${profile || "(not specified)"}\nToday's topic: ${topic || "(not specified; use the profile)"}${recent}`;
+  return { system, user };
+}
+
+// Step one of the problem-type menu: name the type each recent problem uses, so the
+// menu can exclude them by name. Classification only, fast with thinking off.
+export function buildRecentTypesPrompt(args: { domain: string; recentProblems: string[] }): { system: string; user: string } {
+  const system = `You classify ${args.domain ? `${args.domain} ` : ""}practice problems by PROBLEM TYPE: the kind of setup and the key idea a solver needs, as a short phrase (e.g. "work-rate: two agents, combined rate", "two quadratics sharing a root, found by subtracting"). Problems with the same key idea share one type even when their stories or numbers differ. Call emit_types with one type per DISTINCT idea among the problems below.`;
+  return { system, user: args.recentProblems.map((p, i) => `${i + 1}. ${p.slice(0, 300)}`).join("\n") };
+}
+
+// --- Difficulty judge (cascade difficulty-judge.ts) --------------------------
+// Relative judgments against REAL problems of known human difficulty, never an absolute
+// rating: pairwise comparison tracks empirical difficulty clearly better than asking a
+// model to rate one problem alone (Kolesnikova et al. 2026; Ballon et al. 2025), and a
+// solver's pass rate tracked it worst of all (r ≈ 0.2), which is why the pass-rate
+// filter could not separate AMC #6–10 from #11–15.
+const DIFFICULTY_CRITERIA = `Judge difficulty for a strong high-school student working under contest conditions: how many reasoning steps it takes, how standard the key idea is, how easy it is to go wrong, and how long a careful solver needs. Ignore the topic, the length of the statement, and how messy the numbers look. Do not solve the problems fully; judge them.`;
+
+export function buildPairwiseDifficultyPrompt(args: { first: string; second: string; level: string }): { system: string; user: string } {
+  const system = `You compare the difficulty of two ${args.level} problems. ${DIFFICULTY_CRITERIA}
+Call emit_comparison with "harder": "first" or "second". If they are genuinely equal, pick the one you would expect fewer students to solve.`;
+  return { system, user: `First problem:\n${stripChoices(args.first)}\n\nSecond problem:\n${stripChoices(args.second)}` };
+}
+
+export function buildLadderDifficultyPrompt(args: { problem: string; ladder: string[]; level: string }): { system: string; user: string } {
+  const system = `You place a new ${args.level} problem on a difficulty ladder of real contest problems, which are listed from easiest (1) to hardest (${args.ladder.length}). ${DIFFICULTY_CRITERIA}
+Call emit_placement with "harderThan": how many ladder problems the new problem is harder than (0 = easier than all of them, ${args.ladder.length} = harder than all of them).`;
+  const user = `Ladder, easiest first:\n${args.ladder.map((s, i) => `${i + 1}. ${stripChoices(s)}`).join("\n\n")}\n\nNew problem:\n${stripChoices(args.problem)}`;
+  return { system, user };
+}
+
+// Blind program solver (cascade program-solver.ts): a separate cheap call writes the
+// answer-computing program from the statement ALONE, never seeing the writer's answer.
+// Used when the writer itself shouldn't write the check: cheap writers asked for one
+// worked the check out loud and leaked "wait, ..." corrections into 14 of 19 solutions.
+export function buildProgramSolvePrompt(args: { problem: string; domain: string }): { system: string; user: string } {
+  const system = `You solve a ${args.domain ? `${args.domain} ` : ""}problem by writing a short program that computes its answer. Read the problem, decide how to compute the answer from its givens (by formula, by solving, or by enumerating cases), and write the program. Do not explain.
+${ANSWER_PROGRAM_LANGUAGE}
+Call emit_program with "program".`;
+  return { system, user: `Problem:\n${args.problem}` };
+}
+
+// Taxonomy slot selection (cascade generate.ts): which catalog types fit today's topic.
+// Selection only, by number from a fixed list, so the model can't echo recent problems
+// back as "new" types (the failure the two-call menu worked around); which of the
+// fitting types a set actually uses, and excluding what recent sets used, is decided
+// in code (lib/generation/taxonomy.ts).
+export function buildTypeSelectionPrompt(args: { profile: string; topic: string; level: string; types: string[] }): { system: string; user: string } {
+  const system = `You pick problem types for one student's practice set at ${args.level}. From the numbered catalog of real competition problem types, choose EVERY type that fits today's topic: a problem of that type would be practice on the topic. Leave out types that only touch the topic in passing. If the topic is broad, many types fit; if it is narrow, few do.
+Call emit_selection with the chosen type numbers.`;
+  const user = `Student profile: ${args.profile || "(not specified)"}\nToday's topic: ${args.topic || "(not specified; use the profile)"}\n\nCatalog:\n${args.types.map((t, i) => `${i}. ${t}`).join("\n")}`;
+  return { system, user };
+}
+
+// Method-level dedup (cascade method-dedup.ts): do two problems need the same key idea?
+// The definition the repetition eval groups by, applied per pair: surface dedup
+// (shingles) can't see "rectangle area → quadratic" and "age problem → quadratic" as
+// the same practice, and that pattern was the most repeated type in the evals.
+export function buildSameMethodPrompt(args: { first: string; second: string }): { system: string; user: string } {
+  const system = `You check a practice set for repetition. Two problems are the SAME practice when a student who has solved the first would solve the second with the same key idea and the same steps, and only the story, names or numbers differ. They are DIFFERENT when the second needs a genuinely different idea, a different kind of setup, or a meaningfully different technique.
+Call emit_same with "same": true or false.`;
+  return { system, user: `First problem:\n${args.first}\n\nSecond problem:\n${args.second}` };
+}
+
+// Reverse a real problem (cascade reverse.ts; ReverseMath, 2026): hide one given, make
+// the seed's verified answer a given, ask for the hidden value. The new key is the
+// hidden given, read off the seed rather than computed, so it is correct whenever the
+// seed's key is and the reversal determines the value uniquely.
+export function buildReversePrompt(args: {
+  plan: GenerationPlan;
+  seed: Anchor;
+  avoidStatements?: string[];
+  slot?: { index: number; of: number; hint: string };
+}): { system: string; user: string } {
+  const { plan, seed, avoidStatements, slot } = args;
+  const system = `You write ONE free-response ${plan.competition ?? "competition"} problem by REVERSING a real problem whose answer is known.
+1. Pick one given number N in the original that its answer depends on, such that knowing the original answer pins N down to exactly ONE value. If hiding a number would allow several values, pick another.
+2. Write the new problem: the original answer becomes a stated fact, N is hidden, and the question asks for N. Re-dress it: new story, names and wording, the same mathematics. It must read as a natural problem, not as "the answer to this was ...".
+3. The new answer is N itself. ${plan.competition === "AIME" ? "It must be an integer from 0 to 999." : ""}
+4. Check by solving your new problem forward that N is the only value that works.
+No answer choices, no figure references. Use $...$ for inline LaTeX and $$...$$ for display.
+Call emit_problems with exactly one entry: "problem", "answer" (N only), "masked" (N exactly as written in the original), "method" (${METHOD_FIELD}), "solution" (a short forward solution of the NEW problem that a student can follow, ending with a line that states N), and "difficulty" (your estimate, e.g. "${plan.competition ?? "AIME"} #${seed.number ?? 10}").`;
+  const avoid =
+    avoidStatements && avoidStatements.length > 0
+      ? `\nProblems already in this set (test something different):\n${avoidStatements.map((st, i) => `${i + 1}. ${st.slice(0, 200)}`).join("\n")}\n`
+      : "";
+  const place = slot ? `\nThis is problem ${slot.index + 1} of a ${slot.of}-problem set.\n` : "";
+  const user = `Original problem (${seed.source}${seed.number != null ? ` #${seed.number}` : ""}):\n${stripChoices(seed.statement)}\n\nIts verified answer: ${seed.answer}\n${avoid}${place}\nWrite the reversed problem and call emit_problems.`;
   return { system, user };
 }

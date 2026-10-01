@@ -36,6 +36,12 @@ export type Problem = {
   // existed — display/PDF read `solution`, which is always populated.
   solutionSketch?: string;
   difficulty?: string; // model's self-estimate, e.g. "AIME #12" (calibration aid)
+  // Cascade writers only, stripped before a set is stored: a mathjs program computing
+  // the answer from the statement (lib/generation/answer-check.ts), and a one-line
+  // summary of the solution method (method-level dedup).
+  answerCheck?: string;
+  method?: string;
+  masked?: string; // reverse candidates: the given hidden from the seed, as it appears there
 };
 
 // A generated lesson — structured teaching content for a session, stored on
@@ -68,4 +74,7 @@ export type Anchor = {
   // skeleton to transpose suppresses the heavy re-derivation. Populated by the route
   // after retrieval; absent on the scratch path or if Stage A fails.
   sketch?: string;
+  // The ReferenceProblem id, when the retriever supplies it (cascade seeded slots record
+  // it so the student's next sets never reuse the same real problem).
+  id?: string;
 };

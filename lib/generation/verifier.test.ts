@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { answerOkFor, problemOk, solutionOk, solutionSketchOk, tooSimilarToSeed } from "./verifier";
+import { answerMatchesSolution, answerOkFor, finalValueOfSolution, nearCopyOf, problemOk, solutionMetaOk, solutionOk, solutionSketchOk, tooSimilarToSeed } from "./verifier";
 import type { Problem } from "@/lib/types";
 
 const mathPlan = { contentType: "math" as const };
@@ -165,5 +165,76 @@ describe("tooSimilarToSeed", () => {
       },
     ];
     expect(tooSimilarToSeed(p, kept)).not.toBeNull();
+  });
+});
+
+describe("solutionOk rejects a missing derivation", () => {
+  const plan = { contentType: "math" as const };
+  it("rejects an empty or near-empty solution", () => {
+    expect(solutionOk({ problem: "p", answer: "3", solution: "" }, plan)).toBe(false);
+    expect(solutionOk({ problem: "p", answer: "3", solution: "  = 3  " }, plan)).toBe(false);
+  });
+  it("accepts a short but real derivation", () => {
+    expect(solutionOk({ problem: "p", answer: "3", solution: "Since 2x = 6, x = 3." }, plan)).toBe(true);
+  });
+});
+
+// Cases from a real eval run (Opus 5.5 writing easy AMC forward, runs/opus-forward-easy).
+describe("answer/solution consistency (cascade only)", () => {
+  it("reads the value a solution arrives at", () => {
+    expect(finalValueOfSolution("So $b+c=20-\\tfrac{19}{2}=\\tfrac{21}{2}$.")).toBe("\\tfrac{21}{2}");
+    expect(finalValueOfSolution("Work.\nTherefore the answer is $12$.")).toBe("12");
+    expect(finalValueOfSolution("First $x=3$, and \\boxed{7} follows.\nDone.")).toBe("7");
+    expect(finalValueOfSolution("")).toBeNull();
+  });
+
+  it("rejects an answer field that contradicts the solution's own result", () => {
+    expect(answerMatchesSolution(problem({ answer: "13", solution: "Also $c=20$.\nSo $b+c=20-\\tfrac{19}{2}=\\tfrac{21}{2}$." }))).toBe(false);
+    expect(answerMatchesSolution(problem({ answer: "$\\sqrt{73}-5$", solution: "Then $w^2+10w-72=0$.\nSo $w=\\sqrt{97}-5$." }))).toBe(false);
+  });
+
+  it("passes a match in any notation, and abstains when it can't evaluate", () => {
+    expect(answerMatchesSolution(problem({ answer: "10.5", solution: "So $b+c=\\tfrac{21}{2}$." }))).toBe(true);
+    expect(answerMatchesSolution(problem({ answer: "x = 10, -5", solution: "The roots are $x=10$ and $x=-5$." }))).toBe(true);
+    expect(answerMatchesSolution(problem({ answer: "8", solution: "Checking both cases gives the two values of k, which sum as required." }))).toBe(true);
+  });
+
+  it("rejects a solution that says the problem itself is broken", () => {
+    const s = "So the conditions contradict each other, and the problem as written has no answer. The problem needs to be rewritten.";
+    expect(solutionMetaOk(problem({ solution: s }))).toBe(false);
+    // A proof by contradiction is a technique, not a broken problem.
+    expect(solutionMetaOk(problem({ solution: "Suppose $n$ is odd; this leads to a contradiction, so $n$ is even and $n=4$." }))).toBe(true);
+  });
+});
+
+// Real pairs from the eval runs (runs/repetition-*): the threshold's evidence.
+describe("nearCopyOf (cross-session)", () => {
+  const rational = "Find the sum of all real numbers $x$ that satisfy $$\\frac{x}{x-2}+\\frac{3}{x+1}=\\frac{6}{x^2-x-2}.$$";
+  it("does not call different equations with the same terse prose a copy", () => {
+    expect(nearCopyOf("Find the sum of all real numbers $x$ that satisfy $$|x^2-6x+5| = x-1.$$", [rational])).toBeNull();
+    expect(nearCopyOf("Find the sum of all distinct real numbers $x$ that satisfy $$x^4-5x^3+8x^2-5x+1=0.$$", [rational])).toBeNull();
+  });
+  it("lets a new instance of the same type through (types are problem-types.ts's job)", () => {
+    expect(
+      nearCopyOf("Let $r$ and $s$ be the roots of $x^2-3x-5=0$. The quadratic $p(x)=x^2+bx+c$ has roots $r^2$ and $s^2$. What is $p(1)$?", [
+        "Let $r$ and $s$ be the roots of $x^2-5x+3=0$. The quadratic $x^2+bx+c=0$ has roots $r+\\dfrac{1}{s}$ and $s+\\dfrac{1}{r}$. What is $b+c$?",
+      ])
+    ).toBeNull();
+  });
+  it("catches the same equation with new numbers: a repeated exercise, not a new one", () => {
+    expect(nearCopyOf("Find the sum of all real numbers $x$ that satisfy $x^2-5x+5=19.$", ["Find the sum of all real numbers $x$ that satisfy $x^2-4x+3=12.$"])).not.toBeNull();
+  });
+  it("catches a reworded or renamed copy, and says which recent problem it copies", () => {
+    const recent = [
+      rational,
+      "For some real number $a \\neq 6$, the equations $$x^2 + ax + 6 = 0 \\quad\\text{and}\\quad x^2 + 6x + a = 0$$ have exactly one root in common. Each equation also has one root that the other equation does not share. What is the product of these two unshared roots?",
+    ];
+    const copy = nearCopyOf("For a real number $k \\neq 6$, the equations $$x^2 + kx + 6 = 0 \\quad\\text{and}\\quad x^2 + 6x + k = 0$$ have exactly one real root in common. What is the product of the two roots that are not shared?", recent);
+    expect(copy?.index).toBe(1);
+    expect(
+      nearCopyOf("Pipe A fills a tank $5$ hours faster than pipe B, and together they take $6$ hours. How many hours does pipe A take alone?", [
+        "Hose X fills a pool $5$ hours faster than hose Y, and together they take $6$ hours. How many hours does hose X take alone?",
+      ])
+    ).not.toBeNull();
   });
 });

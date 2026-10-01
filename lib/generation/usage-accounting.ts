@@ -33,11 +33,45 @@ const emptyTotals = (): StageTotals => ({
 
 export class UsageAccountant {
   private byStage = new Map<Stage, StageTotals>();
+  // Same totals, split by the provider and model that made each call. A cascade run
+  // spreads one stage across several vendors, and pricing is per model, so a stage
+  // total tagged with a single model would misprice everything but that model.
+  private byModel = new Map<string, { stage: Stage; provider: string; model: string; totals: StageTotals }>();
 
   // Fold one call's usage into its stage. Safe to call from inside the streamed
   // generation path and from the cheap Haiku stages alike.
   record(stage: Stage, u: Anthropic.Usage): void {
-    const t = this.byStage.get(stage) ?? emptyTotals();
+    this.add(this.byStage.get(stage) ?? emptyTotals(), u, (t) => this.byStage.set(stage, t));
+  }
+
+  // As record(), and also attributed to the provider/model that made the call.
+  recordFor(stage: Stage, provider: string, model: string, u: Anthropic.Usage): void {
+    this.record(stage, u);
+    const key = `${stage}:${provider}:${model}`;
+    const entry = this.byModel.get(key) ?? { stage, provider, model, totals: emptyTotals() };
+    this.add(entry.totals, u, (t) => this.byModel.set(key, { ...entry, totals: t }));
+  }
+
+  // genMeta usage keyed "stage:provider:model", one entry per model that ran.
+  // costForRun prices each entry against its own model.
+  perModelUsage(): Record<string, import("@/lib/generation/gen-meta").StageUsage> {
+    const out: Record<string, import("@/lib/generation/gen-meta").StageUsage> = {};
+    for (const [key, { provider, model, totals: t }] of this.byModel) {
+      out[key] = {
+        provider,
+        model,
+        calls: t.calls,
+        inputTokens: t.input,
+        outputTokens: t.output,
+        thinkingTokens: t.thinking,
+        cacheWriteTokens: t.cacheWrite,
+        cacheReadTokens: t.cacheRead,
+      };
+    }
+    return out;
+  }
+
+  private add(t: StageTotals, u: Anthropic.Usage, save: (t: StageTotals) => void): void {
     t.input += u.input_tokens ?? 0;
     t.cacheWrite += u.cache_creation_input_tokens ?? 0;
     t.cacheRead += u.cache_read_input_tokens ?? 0;
@@ -45,7 +79,7 @@ export class UsageAccountant {
     // thinking is a subset of output_tokens — report it, do not add it to output.
     t.thinking += u.output_tokens_details?.thinking_tokens ?? 0;
     t.calls += 1;
-    this.byStage.set(stage, t);
+    save(t);
   }
 
   // Read-only access to the per-stage totals for genMeta persistence (Eng C1: the

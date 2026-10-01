@@ -23,8 +23,12 @@ export async function getAnchors(opts: {
   bandHigh: number | null;
   category: string | null;
   count?: number;
+  // Never widen past the difficulty band: drop the category first, but return fewer
+  // anchors rather than easier ones. The cascade's variant seeds need this — a seed
+  // from outside the band silently makes its variant easier.
+  strictBand?: boolean;
 }): Promise<Anchor[]> {
-  const { competition, bandLow, bandHigh, category, count = 2 } = opts;
+  const { competition, bandLow, bandHigh, category, count = 2, strictBand = false } = opts;
   const hasBand = bandLow != null && bandHigh != null;
   const bandWhere = hasBand ? { number: { gte: bandLow, lte: bandHigh } } : {};
   // Generation undershoots difficulty, so anchor it to the HARD end of the band:
@@ -52,6 +56,7 @@ export async function getAnchors(opts: {
     if (hasBand) tiers.push({ source: competition, ...ceilWhere, ...yearWhere });
     if (hasBand && category) tiers.push({ source: competition, ...bandWhere, ...yearWhere, category });
     if (hasBand) tiers.push({ source: competition, ...bandWhere, ...yearWhere });
+    if (strictBand && hasBand) continue;
     if (category) tiers.push({ source: competition, ...yearWhere, category });
     tiers.push({ source: competition, ...yearWhere });
   }
@@ -90,4 +95,43 @@ export async function getAnchors(opts: {
     }
   }
   return picked;
+}
+
+// Real problems AT specific positions, for the cascade's per-slot difficulty targets
+// (lib/generation/cascade/targets.ts). One query for every position, grouped in app
+// code. Any category: a reference only shows how hard a position is, the session topic
+// decides content. Ordered by id so a rotation key always picks the same problem.
+export async function getReferencesAt(opts: { competition: Competition; numbers: number[] }): Promise<Map<number, Anchor[]>> {
+  const numbers = [...new Set(opts.numbers)];
+  const rows = await prisma.referenceProblem.findMany({
+    where: { source: opts.competition, number: { in: numbers }, answer: { not: null } },
+    select: { id: true, source: true, number: true, statement: true, answer: true, solution: true },
+    orderBy: { id: "asc" },
+  });
+  const out = new Map<number, Anchor[]>(numbers.map((n) => [n, []]));
+  for (const r of rows) {
+    if (r.number == null) continue;
+    out.get(r.number)?.push({ id: r.id, source: r.source, number: r.number, statement: r.statement, answer: r.answer, solution: r.solution });
+  }
+  return out;
+}
+
+// Full corpus problems by id, answered ones only (seeded slots need the real answer and
+// solution). One query; ordered by id.
+export async function getAnchorsByIds(ids: string[]): Promise<Anchor[]> {
+  if (ids.length === 0) return [];
+  const rows = await prisma.referenceProblem.findMany({
+    where: { id: { in: ids }, answer: { not: null } },
+    select: { id: true, source: true, number: true, statement: true, answer: true, solution: true },
+    orderBy: { id: "asc" },
+  });
+  return rows.map((r) => ({ id: r.id, source: r.source, number: r.number, statement: r.statement, answer: r.answer, solution: r.solution }));
+}
+
+// Corpus statements by id, for the difficulty judge's rated anchors (the ids and their
+// ratings come from data/corpus-difficulty.json). One query; order follows `ids`.
+export async function getStatements(ids: string[]): Promise<Map<string, string>> {
+  if (ids.length === 0) return new Map();
+  const rows = await prisma.referenceProblem.findMany({ where: { id: { in: ids } }, select: { id: true, statement: true } });
+  return new Map(rows.map((r) => [r.id, r.statement]));
 }

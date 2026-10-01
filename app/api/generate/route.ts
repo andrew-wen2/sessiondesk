@@ -5,8 +5,11 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/session";
 import { UsageAccountant } from "@/lib/generation/usage-accounting";
 import { generateProblems } from "@/lib/generation/problems";
+import { recentGenerationMemory, recentProblemStatements } from "@/lib/generation/recent-problems";
 import { acquireSlot, releaseSlot, TOO_MANY_MESSAGE } from "@/lib/generation/rate-limit";
-import { GEN_META_VERSION, truncateGenMeta, type GenMeta } from "@/lib/generation/gen-meta";
+import { finishAttempt, startAttempt } from "@/lib/generation/gen-meta";
+import { writeGenMeta } from "@/lib/generation/gen-meta-db";
+import { DAILY_CAP_MESSAGE, overDailyCap, recordAttemptEnd, recordAttemptStart } from "@/lib/generation/attempts";
 
 // POST /api/generate — server-only. Uses ANTHROPIC_API_KEY from env; never
 // import this route or the SDK in a client component.
@@ -50,7 +53,7 @@ export async function POST(request: Request) {
       // Batch all DB reads into parallel queries — student, session, and recent
       // topics. All scoped to the current user so generation can't be driven off
       // another user's student/session.
-      const [student, sessionRow, recent] = await Promise.all([
+      const [student, sessionRow, recent, recentSets] = await Promise.all([
         prisma.student.findFirst({
           where: { id: studentId, userId },
           select: { profile: true },
@@ -66,10 +69,33 @@ export async function POST(request: Request) {
           take: 5,
           select: { topic: true },
         }),
+        // This student's recent generated sets (not this session), so the cascade can
+        // avoid repeating them. Filtered in app code: a Json column isn't queried.
+        prisma.session.findMany({
+          where: { studentId, userId, id: { not: sessionId } },
+          orderBy: { start: "desc" },
+          take: 6,
+          select: { problems: true, genMeta: true },
+        }),
       ]);
       if (!student || !sessionRow) {
         return NextResponse.json({ error: "Student or session not found." }, { status: 404 });
       }
+
+      // Mark the attempt started before any model call — only after the ownership
+      // check and acquireSlot, so a 404 or a busy 429 never leaves a phantom attempt.
+      // If the function is killed at maxDuration this marker is the only record.
+      const startedAt = new Date();
+      // Per-user daily cap: the cascade fans one click out into many model calls, and
+      // accounts are open to registration. Checked before anything is spent.
+      if (await overDailyCap(userId, startedAt)) {
+        return NextResponse.json({ error: DAILY_CAP_MESSAGE }, { status: 429 });
+      }
+      const attemptId = await recordAttemptStart({ userId, sessionId, kind: "problems", startedAt });
+      // Telemetry only: a failed marker write must not block generation.
+      await writeGenMeta(sessionId, (existing) => startAttempt(existing, "problems", startedAt)).catch((e) =>
+        console.error("[/api/generate] failed to persist attempt start", e)
+      );
 
       // Per-request, per-stage token accounting → one summary line at the end.
       const accountant = new UsageAccountant();
@@ -87,36 +113,53 @@ export async function POST(request: Request) {
       // deliberately does NOT share this client — see its own short-timeout client.
       const client = new Anthropic({ maxRetries: 4, timeout: maxDuration * 1000 }); // reads ANTHROPIC_API_KEY from env
 
-      const result = await generateProblems({
-        client,
-        profile: student.profile,
-        topic,
-        recentTopics: recent.map((s) => s.topic),
-        accountant,
-      });
+      // An unexpected throw is recorded as a failed attempt (not left "started",
+      // which would later read as a kill), then handled by the outer catch.
+      let result: Awaited<ReturnType<typeof generateProblems>>;
+      try {
+        result = await generateProblems({
+          startedAt: startedAt.getTime(),
+          rotationKey: `${sessionId}:${attemptId}`,
+          client,
+          profile: student.profile,
+          topic,
+          recentTopics: recent.map((s) => s.topic),
+          recentProblems: recentProblemStatements(recentSets.filter((s) => Array.isArray(s.problems))),
+          recentMemory: recentGenerationMemory(recentSets.filter((s) => Array.isArray(s.problems))),
+          accountant,
+        });
+      } catch (e) {
+        await recordAttemptEnd(attemptId, { ok: false, startedAt });
+        throw e;
+      }
 
       // genMeta is written on BOTH outcomes (Eng T5): the failures are exactly the
-      // runs that most need a join key to how they were attempted, and writing it
-      // only beside a successful `problems` update would leave none for them.
-      const genMeta: GenMeta = truncateGenMeta({ v: GEN_META_VERSION, problems: result.meta });
-      const genMetaJson = genMeta as unknown as Prisma.InputJsonValue;
+      // runs that most need a join key to how they were attempted. On failure only
+      // the attempt record changes — genMeta.problems keeps describing the set that
+      // is still published, which is what grading reads (lib/worksheet.ts).
+      await recordAttemptEnd(attemptId, {
+        ok: result.ok,
+        startedAt,
+        pipeline: result.meta.pipeline ?? "legacy",
+        tier: result.meta.tier,
+        kept: result.meta.kept,
+        asked: result.meta.asked,
+      });
 
       if (!result.ok) {
-        await prisma.session
-          .update({ where: { id: sessionId }, data: { genMeta: genMetaJson } })
-          .catch((e) => console.error("[/api/generate] failed to persist genMeta on failure", e));
+        await writeGenMeta(sessionId, (existing) =>
+          finishAttempt(existing, "problems", startedAt, new Date(), result.meta, false)
+        ).catch((e) => console.error("[/api/generate] failed to persist genMeta on failure", e));
         return NextResponse.json({ error: result.error }, { status: 500 });
       }
 
       console.log(accountant.summaryLine({ tier: result.plan.tier, count: result.count }));
 
-      await prisma.session.update({
-        where: { id: sessionId },
-        data: {
-          problems: result.problems as unknown as Prisma.InputJsonValue,
-          genMeta: genMetaJson,
-        },
-      });
+      await writeGenMeta(
+        sessionId,
+        (existing) => finishAttempt(existing, "problems", startedAt, new Date(), result.meta, true),
+        { problems: result.problems as unknown as Prisma.InputJsonValue }
+      );
 
       return NextResponse.json(result.problems);
     } finally {

@@ -38,6 +38,43 @@ export const PROBLEMS_TOOL: Anthropic.Tool = {
   },
 };
 
+// Cascade writers (lib/generation/cascade/writers.ts): the same emit_problems tool plus
+// two optional fields the construct prompt asks for. Optional, so a seed-variant prompt
+// (buildPrompt) that never mentions them still validates. Legacy keeps PROBLEMS_TOOL.
+export const CASCADE_PROBLEMS_TOOL: Anthropic.Tool = (() => {
+  const items = (PROBLEMS_TOOL.input_schema.properties as { problems: { items: { properties: Record<string, unknown>; required: string[] } } }).problems.items;
+  return {
+    ...PROBLEMS_TOOL,
+    input_schema: {
+      type: "object",
+      properties: {
+        problems: {
+          type: "array",
+          items: {
+            ...items,
+            // Field order is generation order: the check and method come before the
+            // student-facing solution, so a failed check is handled before the solution
+            // exists rather than patched inside it ("wait, ...").
+            properties: {
+              problem: items.properties.problem,
+              answer: items.properties.answer,
+              answerCheck: {
+                type: "string",
+                description: 'A short mathjs program that computes the answer forward from the numbers in the statement, or "none"',
+              },
+              method: { type: "string", description: "One line: the key idea and the solution steps, with no numbers" },
+              masked: { type: "string", description: "Reverse problems only: the hidden given, exactly as written in the original" },
+              solution: items.properties.solution,
+              difficulty: items.properties.difficulty,
+            },
+          },
+        },
+      },
+      required: ["problems"],
+    },
+  };
+})();
+
 export const EMPTY_TOOL_OUTPUT = "Tool output missing problems array";
 
 // Pull the problems array out of a tool_use input. The easy tier (Haiku 4.5) has a
@@ -73,6 +110,20 @@ export function validateProblems(raw: unknown): Problem[] {
     }
     const { problem, answer, solution, difficulty } = p as Problem;
     return { problem, answer, solution, difficulty: typeof difficulty === "string" ? difficulty : undefined };
+  });
+}
+
+// validateProblems plus the cascade's optional fields (CASCADE_PROBLEMS_TOOL).
+export function validateCascadeProblems(raw: unknown): Problem[] {
+  const items = extractProblems(raw);
+  return validateProblems(raw).map((p, i) => {
+    const { answerCheck, method, masked } = (items[i] ?? {}) as { answerCheck?: unknown; method?: unknown; masked?: unknown };
+    return {
+      ...p,
+      ...(typeof answerCheck === "string" && answerCheck.trim() ? { answerCheck } : {}),
+      ...(typeof method === "string" && method.trim() ? { method } : {}),
+      ...(typeof masked === "string" && masked.trim() ? { masked } : {}),
+    };
   });
 }
 
@@ -179,7 +230,11 @@ export async function callTool(
   system: string,
   user: string,
   config: CallConfig,
-  recordUsage: (u: Anthropic.Usage) => void
+  recordUsage: (u: Anthropic.Usage) => void,
+  // Per-request cancellation and timeout (the cascade's rung deadline). A per-request
+  // timeout is safe on the streaming path; see app/api/generate/route.ts for why the
+  // non-streaming path still needs the client-level one.
+  requestOptions: { signal?: AbortSignal; timeout?: number } = {}
 ): Promise<Problem[]> {
   // effort is omitted entirely for the easy tier (Haiku 4.5 rejects output_config.effort).
   // Cast to MessageCreateParams so we can include output_config without TS objecting to
@@ -209,10 +264,11 @@ export async function callTool(
   const message: Anthropic.Message =
     config.stream === false
       ? ((await client.messages.create(
-          streamParams as unknown as Anthropic.MessageCreateParamsNonStreaming
+          streamParams as unknown as Anthropic.MessageCreateParamsNonStreaming,
+          requestOptions
         )) as Anthropic.Message)
       : await client.messages
-          .stream(streamParams as unknown as Parameters<typeof client.messages.stream>[0])
+          .stream(streamParams as unknown as Parameters<typeof client.messages.stream>[0], requestOptions)
           .finalMessage();
   // Stage-tagged token accounting (thinking is a subset of output — handled in
   // UsageAccountant). cache_read should be > 0 on deficit retries / same-student repeats.

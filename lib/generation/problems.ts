@@ -30,8 +30,10 @@ import { sketchSeeds } from "@/lib/generation/seed-sketch";
 import { auditSketch } from "@/lib/generation/verifier-model";
 import { planFor, type GenerationPlan } from "@/lib/generation/plan";
 import { solveProblem } from "@/lib/generation/solve";
-import { solverConfig, SOLVER_CLIENT_TIMEOUT_MS, providerForStage, geminiModelFor } from "@/lib/generation/config";
+import { solverConfig, SOLVER_CLIENT_TIMEOUT_MS, providerForStage, geminiModelFor, anthropicModelFor, envOr, pipelineFor, type Pipeline } from "@/lib/generation/config";
+import { generateProblemsCascade } from "@/lib/generation/cascade/generate";
 import { callGeminiWithRetry, geminiClient } from "@/lib/generation/gemini-call";
+import type { RecentMemory } from "@/lib/generation/recent-problems";
 import type { UsageAccountant } from "@/lib/generation/usage-accounting";
 import type { DropReason, GenerationRunMeta, StageUsage, VerificationVerdict } from "@/lib/generation/gen-meta";
 import {
@@ -60,6 +62,14 @@ export type ProblemsGenInput = {
   topic: string;
   recentTopics: string[];
   accountant: UsageAccountant;
+  startedAt?: number; // epoch ms the request began (the cascade's deadline counts from here)
+  // Varies which real reference problems a cascade set is shown (session + attempt, so
+  // a regenerate differs too). Legacy ignores it.
+  rotationKey?: string;
+  // Problem statements from the student's recent sessions (cascade only: not repeated).
+  recentProblems?: string[];
+  // Cascade only: taxonomy type ids and solution methods from recent sets' genMeta.
+  recentMemory?: RecentMemory;
 };
 
 export type ProblemsGenResult =
@@ -113,6 +123,24 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
     recentTopics,
     recordUsage: (u) => accountant.record("plan", u),
   });
+
+  // Cascade dispatch: the per-slot ladder (lib/generation/cascade) runs instead of the
+  // chunked pipeline below when GENERATION_PIPELINE(_TIER) says so. Legacy stays the
+  // default and the instant rollback. Read once per request.
+  let pipeline: Pipeline;
+  try {
+    pipeline = pipelineFor(plan.tier);
+  } catch (e) {
+    console.error(`[/api/generate] ${e instanceof Error ? e.message : String(e)}`);
+    return {
+      ok: false,
+      error: "Problem generation is misconfigured — check the server logs.",
+      meta: buildMeta({ planSource: plan.source, tier: plan.tier, answerFormat: plan.answerFormat }),
+    };
+  }
+  if (pipeline === "cascade") {
+    return generateProblemsCascade({ profile, topic, recentTopics, accountant, plan, startedAt: input.startedAt, rotationKey: input.rotationKey, recentProblems: input.recentProblems, recentMemory: input.recentMemory });
+  }
 
   const tier = plan.tier;
   // Problem count is fixed by difficulty tier (easy/mid → 10, hard → 5), not chosen
@@ -187,13 +215,7 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
   // Anthropic regardless.
   const tierProvider = providerForStage(tier);
   const useGemini = tierProvider === "gemini";
-  const model =
-    process.env.GENERATION_MODEL ??
-    (tier === "easy"
-      ? (process.env.GENERATION_MODEL_EASY ?? "claude-haiku-4-5")
-      : tier === "mid"
-        ? (process.env.GENERATION_MODEL_MID ?? "claude-sonnet-4-6")
-        : (process.env.GENERATION_MODEL_HARD ?? "claude-opus-5"));
+  const model = anthropicModelFor(tier);
   const geminiTierModel = geminiModelFor(tier);
   console.log(`[/api/generate] model=${useGemini ? geminiTierModel : model} provider=${tierProvider} tier=${tier}`);
   const seedSketchProvider = providerForStage("seedSketch");
@@ -202,9 +224,8 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
   // Adapt-path knobs (env-swappable; only the adapt path reads them). Effort for
   // the transformation pass defaults LOW — adapting a known-correct seed solution is
   // far lighter than the from-scratch solve the old medium budget was sized for.
-  const escalateModel =
-    process.env.GENERATION_MODEL_VERIFY ?? process.env.GENERATION_MODEL_EXPAND ?? "claude-haiku-4-5";
-  const expandModel = process.env.GENERATION_MODEL_EXPAND ?? "claude-haiku-4-5";
+  const escalateModel = envOr(["GENERATION_MODEL_VERIFY", "GENERATION_MODEL_EXPAND"], "claude-haiku-4-5");
+  const expandModel = envOr("GENERATION_MODEL_EXPAND", "claude-haiku-4-5");
   const adaptEffort = parseEffort(process.env.GENERATION_EFFORT_ADAPT, "low");
   const escalateEffort = parseEffort(process.env.GENERATION_EFFORT_ESCALATE, "high");
   const verifyOn = process.env.GENERATION_VERIFY === "1";
@@ -355,11 +376,18 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
     );
     const out: Problem[] = [];
     for (const r of settled) {
-      if (r.status === "fulfilled") out.push(...r.value);
-      else
-        console.warn(
-          `[/api/generate] chunk failed: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`
-        );
+      if (r.status === "fulfilled") {
+        out.push(...r.value);
+        continue;
+      }
+      const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      console.warn(`[/api/generate] chunk failed: ${msg}`);
+      // A partly successful batch used to leave its failed chunks only in the logs.
+      // When every chunk fails the rejection is rethrown below and the caller records
+      // it; recording those here too would double-count.
+      if (settled.some((x) => x.status === "fulfilled")) {
+        drops.push({ reason: msg === "filtered" ? "content-filtered" : "generation-failed", excerpt: `chunk: ${msg}` });
+      }
     }
     if (out.length === 0) {
       const firstReject = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
@@ -402,7 +430,7 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
       accountant,
       "plan",
       planProvider,
-      planProvider === "gemini" ? geminiModelFor("plan") : (process.env.GENERATION_MODEL_PLAN ?? "claude-haiku-4-5")
+      planProvider === "gemini" ? geminiModelFor("plan") : anthropicModelFor("plan")
     );
   const generationUsage = () => stageUsage(accountant, "generation", tierProvider, useGemini ? geminiTierModel : model);
   const failMeta = () =>

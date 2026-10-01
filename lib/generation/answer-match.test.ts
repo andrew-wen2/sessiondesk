@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { answersMatch } from "./answer-match";
+import { answersMatch, evaluateAnswer } from "./answer-match";
 
 describe("answersMatch", () => {
   it("treats equivalent fraction/decimal/LaTeX forms as equal", () => {
@@ -119,5 +119,32 @@ describe("answersMatch", () => {
       expect(answersMatch("14.", "14", { strictness: "strict" })).toBe(false);
       expect(answersMatch("−14", "-14", { strictness: "strict" })).toBe(false);
     });
+  });
+});
+
+describe("evaluateAnswer", () => {
+  const close = (s: string, v: number) => expect(evaluateAnswer(s)).toBeCloseTo(v, 9);
+
+  it("evaluates numbers and simple closed forms", () => {
+    close("12", 12);
+    close("$\\tfrac{21}{2}$", 10.5);
+    close("\\dfrac{39}{8}", 4.875);
+    close("$\\sqrt{97}-5$", Math.sqrt(97) - 5);
+    close("2\\sqrt{3}", 2 * Math.sqrt(3));
+    close("\\frac{3\\pi}{4}", (3 * Math.PI) / 4);
+    close("2^{5}", 32);
+    close("-2^2", -4);
+    close("x = -\\frac{4}{3}", -4 / 3);
+    close("1,024", 1024);
+  });
+
+  it("tells apart the answers an Opus answer field got wrong", () => {
+    expect(evaluateAnswer("$\\sqrt{73}-5$")).not.toBeCloseTo(evaluateAnswer("\\sqrt{97}-5")!, 6);
+  });
+
+  it("returns null for anything that is not a single closed-form number", () => {
+    for (const s of ["x + 1", "10, -5", "(1, 2)", "all real numbers", "", "\\sqrt[3]{2}", "2x", "3 apples and 2 pears", "\\sqrt{-4}"]) {
+      expect(evaluateAnswer(s)).toBeNull();
+    }
   });
 });

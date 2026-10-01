@@ -38,6 +38,8 @@ export type GeminiCallConfig = {
   parametersJsonSchema: unknown; // reuse an existing Anthropic.Tool.input_schema directly
   maxOutputTokens: number;
   thinkingLevel: GeminiThinkingLevel;
+  // Cascade rung deadline / abort. Optional; the legacy path doesn't set it.
+  abortSignal?: AbortSignal;
 };
 
 // Adapts Gemini's usage shape into the Anthropic.Usage shape UsageAccountant
@@ -98,6 +100,7 @@ export async function callGemini<T>(
       toolConfig: {
         functionCallingConfig: { mode: FunctionCallingConfigMode.ANY, allowedFunctionNames: [config.functionName] },
       },
+      ...(config.abortSignal ? { abortSignal: config.abortSignal } : {}),
     },
   });
 
@@ -110,7 +113,12 @@ export async function callGemini<T>(
   if (finishReason === "MAX_TOKENS") throw new Error("truncated");
 
   const call = response.functionCalls?.find((c) => c.name === config.functionName);
-  if (!call || !call.args) throw new Error("no_tool");
+  // Keep Gemini's own reason when it has one: MALFORMED_FUNCTION_CALL (thinking and
+  // output overrunning the budget) is the suspected cause of short mid-tier sets, and
+  // a bare "no_tool" made it indistinguishable from the model simply not calling.
+  if (!call || !call.args) {
+    throw new Error(finishReason === "MALFORMED_FUNCTION_CALL" ? "malformed_function_call" : "no_tool");
+  }
 
   return validate(call.args);
 }
@@ -122,7 +130,8 @@ export async function callGemini<T>(
 // the outcome (the caller's deficit-refill loop handles those, not a retry here).
 export function isGeminiTransient(e: unknown): boolean {
   if (e instanceof ApiError) return e.status === 408 || e.status === 409 || e.status === 429 || e.status >= 500;
-  return e instanceof Error && e.message === "no_tool";
+  // Retried as before; the distinct message only changes what gets recorded.
+  return e instanceof Error && (e.message === "no_tool" || e.message === "malformed_function_call");
 }
 
 export async function callGeminiWithRetry<T>(

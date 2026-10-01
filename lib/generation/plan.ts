@@ -22,7 +22,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { calibrationFor, categoryFor, tierFor, type Competition } from "@/lib/calibration";
 import { RUBRICS, buildPlanPrompt } from "@/lib/generation-prompt";
 import { callGeminiWithRetry, geminiClient } from "@/lib/generation/gemini-call";
-import { providerForStage, geminiModelFor } from "@/lib/generation/config";
+import { providerForStage, geminiModelFor, anthropicModelFor } from "@/lib/generation/config";
 
 // Drives rendering hints and which similarity axes apply — a shared integer means
 // something in two math problems and nothing in two Spanish exercises.
@@ -62,6 +62,9 @@ export type GenerationPlan = {
   bandHigh: number | null;
   category: string | null; // corpus retrieval filter
   source: "corpus" | "model" | "fallback"; // provenance, for the log line
+  // Model path only: distinct sub-skills within today's topic, one per problem the
+  // cascade writes separately. Optional; the lesson path ignores it.
+  slots?: string[];
 };
 
 const PLAN_TOOL: Anthropic.Tool = {
@@ -103,6 +106,11 @@ const PLAN_TOOL: Anthropic.Tool = {
       rubric: {
         type: "string",
         description: "3-4 sentences calibrating difficulty for this exact student: what a too-easy problem looks like, what an on-target one looks like, and what would be above their level. Be concrete about the specific skills and content involved.",
+      },
+      slots: {
+        type: "array",
+        items: { type: "string" },
+        description: "Up to 20 distinct sub-skills or angles within today's topic, each a short phrase, so a set of separately written problems covers different ground. Stay inside the topic; repeat an angle rather than drift off-topic.",
       },
     },
     required: ["domain", "contentType", "tier", "answerFormat", "rubric"],
@@ -208,6 +216,9 @@ export async function planFor(args: {
         "short-text"
       ),
       rubric: str("rubric"),
+      slots: Array.isArray(raw.slots)
+        ? raw.slots.filter((s): s is string => typeof s === "string" && s.trim() !== "").map((s) => s.trim()).slice(0, 20)
+        : undefined,
     };
   };
 
@@ -231,7 +242,7 @@ export async function planFor(args: {
       );
     } else {
       const message = await client.messages.create({
-        model: process.env.GENERATION_MODEL_PLAN ?? "claude-haiku-4-5",
+        model: anthropicModelFor("plan"),
         max_tokens: 1500,
         thinking: { type: "disabled" },
         system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],

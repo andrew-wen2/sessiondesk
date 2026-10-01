@@ -26,7 +26,7 @@ import { buildSolvePrompt } from "@/lib/generation-prompt";
 import { answersMatch } from "@/lib/generation/answer-match";
 import type { AnswerFormat } from "@/lib/generation/plan";
 
-const SOLVE_TOOL: Anthropic.Tool = {
+export const SOLVE_TOOL: Anthropic.Tool = {
   name: "emit_solve",
   description: "Return the solved answer for this problem.",
   input_schema: {

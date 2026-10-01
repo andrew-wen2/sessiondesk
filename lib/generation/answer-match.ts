@@ -105,6 +105,123 @@ function splitAnswerPrefix(normalized: string): { varName: string | null; value:
   return { varName: m[1], value: m[2] };
 }
 
+// The answer as a single plain number under loose normalization ("x = 2",
+// "$\frac{8}{3}$", "1,024"), or null when it is anything else. Lets a caller tell
+// when a numeric comparison is definitive, so two different numbers never go to a
+// model to be judged equivalent (scripts/eval-accuracy-lib.ts).
+export function parseNumericAnswer(s: string): number | null {
+  const raw = (s ?? "").trim();
+  if (!raw) return null;
+  return tryParseNumber(stripTrailingWords(splitAnswerPrefix(looseNumericCleanup(normalizeString(raw))).value));
+}
+
+// The numeric value of an answer that is a number or a simple closed-form expression
+// ("$\sqrt{97}-5$", "2\sqrt{3}", "\tfrac{21}{2}", "3\pi/4", "x = 2^{5}"), or null for
+// anything else (a variable expression, words, a list, an interval). Lets a caller
+// compare "\sqrt{73}-5" with "\sqrt{97}-5" as the different numbers they are. Only the
+// cascade's answer/solution consistency guard uses it; grading keeps answersMatch.
+export function evaluateAnswer(s: string): number | null {
+  const raw = (s ?? "").trim();
+  if (!raw) return null;
+  const pre = raw
+    .replace(/\\tfrac/g, "\\frac")
+    .replace(/\\(cdot|times)/g, "*")
+    .replace(/\\pi\b/g, "pi")
+    .replace(/\^\{([^{}]*)\}/g, "^($1)");
+  let t = looseNumericCleanup(normalizeString(pre));
+  const eq = t.lastIndexOf("=");
+  if (eq !== -1) {
+    // "x = 2" → "2"; anything left of the last "=" must be a bare variable.
+    if (!/^[a-z][a-z0-9_]*$/.test(t.slice(0, eq).split("=").pop() ?? "")) return null;
+    t = t.slice(eq + 1);
+  }
+  if (!t || /[^0-9.+\-*/^()a-z]/.test(t)) return null;
+  const v = new SimpleExpr(t).parse();
+  return v != null && Number.isFinite(v) ? v : null;
+}
+
+// Recursive-descent evaluator over the normalized alphabet above: numbers, + - * / ^,
+// parentheses, sqrt(...), pi, and implicit multiplication ("2sqrt(3)", "3pi").
+class SimpleExpr {
+  private i = 0;
+  constructor(private readonly s: string) {}
+  parse(): number | null {
+    const v = this.expr();
+    return v != null && this.i === this.s.length ? v : null;
+  }
+  private peek() {
+    return this.s[this.i];
+  }
+  private expr(): number | null {
+    let v = this.term();
+    while (v != null && (this.peek() === "+" || this.peek() === "-")) {
+      const op = this.s[this.i++];
+      const r = this.term();
+      if (r == null) return null;
+      v = op === "+" ? v + r : v - r;
+    }
+    return v;
+  }
+  private term(): number | null {
+    let v = this.unary();
+    for (;;) {
+      if (v == null) return null;
+      const c = this.peek();
+      if (c === "*" || c === "/") {
+        this.i++;
+        const r = this.unary();
+        if (r == null) return null;
+        v = c === "*" ? v * r : v / r;
+      } else if (c !== undefined && /[0-9.(a-z]/.test(c)) {
+        const r = this.power(); // implicit multiplication
+        if (r == null) return null;
+        v *= r;
+      } else return v;
+    }
+  }
+  // Unary minus binds looser than ^, so "-2^2" is -4.
+  private unary(): number | null {
+    if (this.peek() === "-") {
+      this.i++;
+      const v = this.unary();
+      return v == null ? null : -v;
+    }
+    return this.power();
+  }
+  private power(): number | null {
+    const base = this.primary();
+    if (base == null || this.peek() !== "^") return base;
+    this.i++;
+    const exp = this.unary();
+    return exp == null ? null : base ** exp;
+  }
+  private primary(): number | null {
+    const rest = this.s.slice(this.i);
+    const num = /^(\d+\.?\d*|\.\d+)/.exec(rest);
+    if (num) {
+      this.i += num[0].length;
+      return Number(num[0]);
+    }
+    if (rest.startsWith("pi")) {
+      this.i += 2;
+      return Math.PI;
+    }
+    if (rest.startsWith("sqrt(")) {
+      this.i += 4;
+      const v = this.primary();
+      return v == null || v < 0 ? null : Math.sqrt(v);
+    }
+    if (rest.startsWith("(")) {
+      this.i++;
+      const v = this.expr();
+      if (v == null || this.peek() !== ")") return null;
+      this.i++;
+      return v;
+    }
+    return null;
+  }
+}
+
 export function answersMatch(
   a: string,
   b: string,

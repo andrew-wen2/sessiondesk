@@ -22,6 +22,7 @@
 // overwritten anyway.
 
 import type { Problem } from "@/lib/types";
+import { evaluateAnswer } from "@/lib/generation/answer-match";
 import type { GenerationPlan } from "@/lib/generation/plan";
 
 export type GuardPlan = Pick<GenerationPlan, "contentType">;
@@ -131,8 +132,13 @@ const SOLUTION_BACKTRACK = [
   /\bi made (an|a) (error|mistake)\b/i,
   /\bwait,/i,
 ];
+// A missing or near-empty solution is rejected too: answer agreement can't vouch for a
+// derivation that isn't there, and a student sees this field after committing.
+const MIN_SOLUTION_CHARS = 12;
 export function solutionOk(p: Problem, _plan: GuardPlan): boolean {
-  return !SOLUTION_BACKTRACK.some((re) => re.test(p.solution || ""));
+  const s = (p.solution || "").trim();
+  if (s.replace(/\s+/g, "").length < MIN_SOLUTION_CHARS) return false;
+  return !SOLUTION_BACKTRACK.some((re) => re.test(s));
 }
 
 // Adapt-path equivalent of solutionOk: the heavy pass emits a `solutionSketch`
@@ -243,4 +249,104 @@ export function tooSimilarToSeed(
     }
   }
   return null;
+}
+
+// --- Answer/solution consistency (cascade only) ------------------------------
+// Opus, writing forward, sometimes commits an answer and then works the solution out
+// to something else, leaving the answer field stale (eval, easy AMC: 3 of 30 keys).
+// Two guards catch it without a model call. The legacy pipeline doesn't run them.
+
+// The value a solution arrives at: the last \boxed{…} if there is one, else the last
+// line's final math span, taking what follows its last "=" or a closing "is …".
+export function finalValueOfSolution(solution: string): string | null {
+  const boxed = [...solution.matchAll(/\\boxed\{((?:[^{}]|\{[^{}]*\})*)\}/g)].pop();
+  if (boxed) return boxed[1].trim();
+  const lines = solution
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const last = lines.pop();
+  if (!last) return null;
+  const spans = [...last.matchAll(/\$\$?([^$]+)\$\$?/g)];
+  const span = spans.pop();
+  const text = span ? span[1] : last;
+  const eq = text.lastIndexOf("=");
+  if (eq !== -1) return text.slice(eq + 1).replace(/[.,;]+\s*$/, "").trim();
+  // "…the answer is $12$." — the span itself is the value.
+  if (span && /\b(?:is|equals|answer:?)\s*$/i.test(last.slice(0, span.index))) return text.trim();
+  const is = /\b(?:is|equals|answer:?)\s+(.+?)[.,;]?\s*$/i.exec(text);
+  return is ? is[1].replace(/\$/g, "").trim() : null;
+}
+
+// False only when the answer field and the solution's final value are both closed-form
+// numbers and they differ. Anything it can't evaluate passes: this must never reject a
+// good problem just because a solution ends in words or a multi-part answer.
+export function answerMatchesSolution(p: Problem): boolean {
+  const final = finalValueOfSolution(p.solution || "");
+  if (final == null) return true;
+  const a = evaluateAnswer(p.answer);
+  const b = evaluateAnswer(final);
+  if (a == null || b == null) return true;
+  return Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(a), Math.abs(b));
+}
+
+// A solution that talks ABOUT the problem being broken: the writer noticed and shipped
+// it anyway (an eval Opus solution ended "the problem as written has no answer… needs
+// to be rewritten"). Narrow on purpose: "contradiction" alone is a proof technique.
+const SOLUTION_META = [
+  /\bproblem as (written|stated|given)\b/i,
+  /\b(needs|should) (to )?be (rewritten|revised|reworded|fixed)\b/i,
+  /\banswer field\b/i,
+  /\b(problem|question|statement) is (ill-posed|flawed|inconsistent|contradictory|underspecified|unsolvable)\b/i,
+  /\bconditions (contradict each other|are inconsistent)\b/i,
+  /\bhas no (valid )?answer\b/i,
+];
+export function solutionMetaOk(p: Problem): boolean {
+  const s = p.solution || "";
+  return !SOLUTION_META.some((re) => re.test(s));
+}
+
+// --- Cross-session near-copy check (cascade) --------------------------------
+// tooSimilarToSeed compares prose with the math stripped out, which is right inside one
+// set but misfires against a student's history: terse contest statements share their
+// prose ("Find the sum of all real numbers $x$ that satisfy ..."), so two unrelated
+// equations scored lexical Jaccard 1.00 and a session failed on false repeats. This
+// compares the WHOLE statement, math included, as overlapping 3-token shingles with
+// single-letter variables made interchangeable, so a reworded or renamed copy of the
+// same equations matches and a different equation doesn't. A new instance of the same
+// TYPE (other numbers, other transform) is deliberately not a copy: avoiding types is
+// problem-types.ts's job. Threshold from 7 real pairs out of the eval runs: false
+// matches scored 0.03–0.15, same-type new instances 0.24–0.26, copies 0.30–0.33, so
+// the margin is thin; revisit with more pairs.
+const STATEMENT_STOP = new Set(["the", "a", "an", "of", "and", "is", "are", "that", "what", "find", "for", "all", "to", "be", "in"]);
+function statementTokens(s: string): string[] {
+  return (s.toLowerCase().replace(/\$/g, " ").match(/\\[a-z]+|\d+(?:\.\d+)?|[a-z]+|[=+\-*/^<>|()]/g) ?? [])
+    .filter((t) => !STATEMENT_STOP.has(t))
+    .map((t) => (/^[a-z]$/.test(t) ? "v" : t));
+}
+function shingles(tokens: string[], k = 3): Set<string> {
+  const out = new Set<string>();
+  for (let i = 0; i + k <= tokens.length; i++) out.add(tokens.slice(i, i + k).join(" "));
+  return out;
+}
+export const NEAR_COPY_THRESHOLD = 0.28;
+const jaccard = (a: Set<string>, b: Set<string>) => {
+  let shared = 0;
+  for (const x of a) if (b.has(x)) shared++;
+  return shared / (a.size + b.size - shared || 1);
+};
+// The same whole-statement shingle Jaccard nearCopyOf scores with; also the similarity
+// kernel the repetition eval's diversity score is computed over.
+export function statementSimilarity(a: string, b: string): number {
+  return jaccard(shingles(statementTokens(a)), shingles(statementTokens(b)));
+}
+export function nearCopyOf(problem: string, others: string[]): { index: number; score: number } | null {
+  const a = shingles(statementTokens(problem));
+  if (a.size === 0) return null;
+  let best: { index: number; score: number } | null = null;
+  others.forEach((o, index) => {
+    const score = jaccard(a, shingles(statementTokens(o)));
+    if (score >= NEAR_COPY_THRESHOLD && (!best || score > best.score)) best = { index, score };
+  });
+  return best;
 }

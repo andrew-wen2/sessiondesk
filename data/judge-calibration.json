@@ -1,0 +1,63 @@
+{
+  "builtAt": "2026-09-24",
+  "judges": {
+    "openweight:zai-org/GLM-5.3@low": {
+      "AMC10": {
+        "slope": 0.5924,
+        "intercept": 0.0827,
+        "n": 163,
+        "from": "runs/judge-glm-AMC10-full.jsonl,runs/judge-val-ow.jsonl"
+      },
+      "AMC12": {
+        "slope": 0.6647,
+        "intercept": 0.0896,
+        "n": 75,
+        "from": "runs/judge-glm-AMC12-full.jsonl"
+      },
+      "AIME": {
+        "slope": 0.5503,
+        "intercept": 0.2587,
+        "n": 65,
+        "from": "runs/judge-glm-AIME-full.jsonl"
+      }
+    },
+    "openweight:deepseek-ai/DeepSeek-V4.1-Flash@low": {
+      "AMC10": {
+        "slope": 0.1214,
+        "intercept": 0.1582,
+        "n": 39,
+        "from": "runs/judge-val-ow.jsonl"
+      }
+    },
+    "gemini:gemini-3.8-flash@low": {
+      "AMC10": {
+        "slope": 0.4619,
+        "intercept": 0.1042,
+        "n": 119,
+        "from": "runs/judge-val-amc10-90.jsonl,runs/judge-val.jsonl"
+      },
+      "AIME": {
+        "slope": 0.6248,
+        "intercept": 0.1994,
+        "n": 60,
+        "from": "runs/judge-val-aime.jsonl"
+      }
+    },
+    "openweight:deepseek-ai/DeepSeek-V4.1-Flash@off": {
+      "AMC10": {
+        "slope": 0.5266,
+        "intercept": 0.0904,
+        "n": 30,
+        "from": "runs/judge-val.jsonl"
+      }
+    },
+    "anthropic:claude-opus-5-5@low": {
+      "AMC10": {
+        "slope": 0.4945,
+        "intercept": 0.1,
+        "n": 30,
+        "from": "runs/judge-val.jsonl"
+      }
+    }
+  }
+}
