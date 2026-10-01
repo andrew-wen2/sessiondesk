@@ -11,7 +11,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Lesson } from "@/lib/types";
 import type { GenerationPlan } from "@/lib/generation/plan";
 import { callGeminiWithRetry, geminiClient } from "@/lib/generation/gemini-call";
-import { providerForStage, geminiModelFor, anthropicModelFor } from "@/lib/generation/config";
+import { callOpenWeightWithRetry } from "@/lib/generation/openweight-stage";
+import { providerForStage, geminiModelFor, anthropicModelFor, stageModel } from "@/lib/generation/config";
 
 export type LessonInput = {
   profile: string; // the student's free-text profile (subject + level + goals)
@@ -142,6 +143,10 @@ function validateLesson(raw: unknown): Lesson {
   return { title, objectives, sections, workedExamples, practice };
 }
 
+// A full lesson is one long non-streaming reply; this bounds it well inside the lesson
+// route's function limit instead of the open-weight caller's classification-sized default.
+const LESSON_TIMEOUT_MS = 240_000;
+
 export type LessonResult = { ok: true; lesson: Lesson } | { ok: false; error: string };
 
 export async function generateLesson(opts: {
@@ -154,13 +159,32 @@ export async function generateLesson(opts: {
   // not a cheaper job than one for an advanced student — so this stays on the mid
   // (Sonnet) model rather than following plan.tier down to Haiku. Env-overridable.
   const model = anthropicModelFor("lesson");
+  const provider = providerForStage("lesson");
   const { system, user } = buildLessonPrompt(input);
   console.log(
-    `[/api/generate-lesson] plan=${input.plan.source} domain="${input.plan.domain}" tier=${input.plan.tier} model=${model}`
+    `[/api/generate-lesson] plan=${input.plan.source} domain="${input.plan.domain}" tier=${input.plan.tier} provider=${provider} model=${stageModel("lesson", model)}`
   );
 
   try {
-    if (providerForStage("lesson") === "gemini") {
+    if (provider === "openweight") {
+      const lesson = await callOpenWeightWithRetry(
+        stageModel("lesson", model),
+        system,
+        user,
+        {
+          functionName: "emit_lesson",
+          functionDescription: LESSON_TOOL.description ?? "",
+          parametersJsonSchema: LESSON_TOOL.input_schema,
+          maxOutputTokens: 16000,
+          thinking: "off",
+          timeoutMs: LESSON_TIMEOUT_MS,
+        },
+        validateLesson,
+        recordUsage
+      );
+      return { ok: true, lesson };
+    }
+    if (provider === "gemini") {
       const lesson = await callGeminiWithRetry(
         geminiClient(),
         geminiModelFor("lesson"),

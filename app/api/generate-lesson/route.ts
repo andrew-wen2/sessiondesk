@@ -10,7 +10,7 @@ import { acquireSlot, releaseSlot, TOO_MANY_MESSAGE } from "@/lib/generation/rat
 import { finishAttempt, startAttempt, type GenerationRunMeta } from "@/lib/generation/gen-meta";
 import { writeGenMeta } from "@/lib/generation/gen-meta-db";
 import { DAILY_CAP_MESSAGE, overDailyCap, recordAttemptEnd, recordAttemptStart } from "@/lib/generation/attempts";
-import { providerForStage, geminiModelFor, anthropicModelFor } from "@/lib/generation/config";
+import { providerForStage, stageModel, anthropicModelFor } from "@/lib/generation/config";
 
 // POST /api/generate-lesson — server-only. Uses ANTHROPIC_API_KEY from env.
 // Body: { studentId, sessionId, topic? }. Generates a structured lesson and
@@ -97,15 +97,13 @@ export async function POST(request: Request) {
         plan: accountant.asStageUsage(
           "plan",
           providerForStage("plan"),
-          providerForStage("plan") === "gemini" ? geminiModelFor("plan") : anthropicModelFor("plan")
+          stageModel("plan", anthropicModelFor("plan"))
         ) ?? undefined,
         generation:
           accountant.asStageUsage(
             "generation",
             providerForStage("lesson"),
-            providerForStage("lesson") === "gemini"
-              ? geminiModelFor("lesson")
-              : anthropicModelFor("lesson")
+            stageModel("lesson", anthropicModelFor("lesson"))
           ) ?? undefined,
       },
       drops: result.ok ? [] : [{ reason: "generation-failed", excerpt: result.error }],

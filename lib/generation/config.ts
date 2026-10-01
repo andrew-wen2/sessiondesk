@@ -67,10 +67,12 @@ export const SOLVER_CLIENT_TIMEOUT_MS = 40_000;
 // seed-sketch, expand, and lessons. Per-stage (Eng D2), not a single on/off switch:
 // the HARD tier is the one reasoning-critical generation call (AIME #10-15 variants
 // or a non-contest student's hardest material), so it stays on Claude Opus; every
-// other stage runs on Gemini Flash, which is cheaper and was measured clean on
-// LaTeX-heavy structured output in function-calling mode (see gemini-call.ts).
-// GENERATION_PROVIDER="anthropic"/"gemini" is an escape hatch that forces EVERY
-// stage to one vendor — for an eval `--compare` run against a single-vendor
+// other stage runs on the open-weight host (OPENWEIGHT_BASE_URL, see
+// openweight-stage.ts). Those stages ran on Gemini Flash until 2026-10; Gemini is now
+// opt-in only (the cascade's difficulty judge, configured separately through
+// CASCADE_DIFFICULTY_JUDGE, also defaults to an open-weight model).
+// GENERATION_PROVIDER="anthropic"/"openweight"/"gemini" is an escape hatch that forces
+// EVERY stage to one vendor — for an eval `--compare` run against a single-vendor
 // baseline, or to roll back without a deploy if the mixed policy misbehaves.
 // The solver (lib/generation/solve.ts) is UNAFFECTED by any of this and always
 // stays on Anthropic: Premise 3 requires the oracle be a different model family
@@ -79,13 +81,13 @@ export const SOLVER_CLIENT_TIMEOUT_MS = 40_000;
 // on Opus alongside an Opus solver is the one place that independence narrows to
 // "different model, same vendor" — same as this pipeline's pre-Gemini baseline,
 // not a new regression.)
-export type GenerationProvider = "anthropic" | "gemini";
+export type GenerationProvider = "anthropic" | "gemini" | "openweight";
 export type GenModelStage = "plan" | "easy" | "mid" | "hard" | "expand" | "seedSketch" | "lesson";
 
 export function providerForStage(stage: GenModelStage): GenerationProvider {
   const override = process.env.GENERATION_PROVIDER;
-  if (override === "anthropic" || override === "gemini") return override;
-  return stage === "hard" ? "anthropic" : "gemini";
+  if (override === "anthropic" || override === "gemini" || override === "openweight") return override;
+  return stage === "hard" ? "anthropic" : "openweight";
 }
 
 // Which problem pipeline a tier runs: "legacy" (chunked, lib/generation/problems.ts)
@@ -143,4 +145,29 @@ export function geminiModelFor(stage: GenModelStage): string {
     lesson: "GEMINI_MODEL_MID",
   };
   return envOr(["GEMINI_MODEL", perStage[stage]], "gemini-3.8-flash");
+}
+
+// Open-weight model per stage (OpenAI-compatible host, see openweight-stage.ts). One
+// model for every stage to start, same as the Gemini defaults above. DeepSeek Flash
+// because it accepts a forced tool call with thinking off, which every one of these
+// stages relies on; GLM-5.3 can do neither.
+export const OPENWEIGHT_STAGE_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash";
+export function openweightModelFor(stage: GenModelStage): string {
+  const perStage: Record<typeof stage, string> = {
+    plan: "OPENWEIGHT_MODEL_PLAN",
+    easy: "OPENWEIGHT_MODEL_EASY",
+    mid: "OPENWEIGHT_MODEL_MID",
+    hard: "OPENWEIGHT_MODEL_HARD",
+    expand: "OPENWEIGHT_MODEL_EXPAND",
+    seedSketch: "OPENWEIGHT_MODEL_EXPAND", // seed-sketch reuses the expand model, as on the other providers
+    lesson: "OPENWEIGHT_MODEL_LESSON",
+  };
+  return envOr(["OPENWEIGHT_MODEL", perStage[stage]], OPENWEIGHT_STAGE_MODEL);
+}
+
+// The model a stage actually runs on, for genMeta provenance: the hosted provider's own
+// model for that stage, else the Anthropic model the caller resolved.
+export function stageModel(stage: GenModelStage, anthropicModel: string): string {
+  const provider = providerForStage(stage);
+  return provider === "gemini" ? geminiModelFor(stage) : provider === "openweight" ? openweightModelFor(stage) : anthropicModel;
 }

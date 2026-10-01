@@ -272,10 +272,14 @@ export function writesOwnProgram(rung: RungConfig): boolean {
 // the candidate's writer is used. Measured on 80 real AMC #1–15 problems: Gemini Flash
 // (thinking low) computed 74 with 2 wrong in 21s; DeepSeek Flash (low) 72 with 2 wrong
 // in 40s; DeepSeek with thinking off got 43% of its values wrong and is not usable.
+// The default is open-weight only (2026-10: Gemini is opt-in everywhere).
+// GLM-5.3 is second so a DeepSeek-written candidate still has a
+// solver from another family; GLM has NOT been measured as a program solver.
+// "gemini:gemini-3.8-flash@low" can be put back in front through CASCADE_PROGRAM_SOLVERS.
 // The same-practice judge for method-level dedup: a classification, fast with thinking off.
 export const DEFAULT_METHOD_JUDGE = "openweight:deepseek-ai/DeepSeek-V4.1-Flash@off";
 
-export const DEFAULT_PROGRAM_SOLVERS = "gemini:gemini-3.8-flash@low,openweight:deepseek-ai/DeepSeek-V4.1-Flash@low";
+export const DEFAULT_PROGRAM_SOLVERS = "openweight:deepseek-ai/DeepSeek-V4.1-Flash@low,openweight:zai-org/GLM-5.3@low";
 export function programSolversFromEnv(tier: GenerationPlan["tier"]): RungConfig[] {
   const v = envOr("CASCADE_PROGRAM_SOLVERS", DEFAULT_PROGRAM_SOLVERS).trim();
   if (v === "off") return [];
@@ -290,7 +294,11 @@ export function programSolverFor(solvers: RungConfig[], writerModel: string): Ru
 // AMC 10 problems (eval:difficulty-judge): Gemini Flash Spearman 0.76 vs human rating,
 // GLM-5.3 0.64, problem number itself 0.63; DeepSeek failed. Recorded per kept item;
 // it rejects only when CASCADE_DIFFICULTY_TOLERANCE (in rating units) is set.
-export const DEFAULT_DIFFICULTY_JUDGE = "gemini:gemini-3.8-flash@low";
+// GLM-5.3 for now (2026-10), so nothing in the default configuration needs a Gemini
+// key. It tracks human ratings less closely than Gemini Flash (0.64 against 0.76) but
+// has a fitted calibration for AMC 10, AMC 12 and AIME (data/judge-calibration.json);
+// set CASCADE_DIFFICULTY_JUDGE="gemini:gemini-3.8-flash@low" to go back.
+export const DEFAULT_DIFFICULTY_JUDGE = "openweight:zai-org/GLM-5.3@low";
 export const JUDGE_ANCHORS = 8;
 
 export function answerCheckEnabled(): boolean {

@@ -32,9 +32,16 @@ export function checkGenerationConfig(): CheckReport {
   const warnings: string[] = [];
 
   if (!envOr("ANTHROPIC_API_KEY", "")) errors.push("ANTHROPIC_API_KEY is not set — the route refuses to generate without it.");
-  if (providerForStage("plan") === "gemini" && !envOr("GOOGLE_API_KEY", "")) {
-    warnings.push("The plan stage runs on Gemini but GOOGLE_API_KEY is not set: non-contest students will silently get the keyword fallback plan.");
+  // The plan stage never fails a request: without credentials it silently falls back.
+  const planProvider = providerForStage("plan");
+  const planProblem = planProvider === "anthropic" ? null : credentialProblem(planProvider);
+  if (planProblem) {
+    warnings.push(`The plan stage runs on ${planProvider} but ${planProblem}: non-contest students will silently get the keyword fallback plan.`);
   }
+  // Lessons have no fallback: a missing credential is a failed "Generate lesson".
+  const lessonProvider = providerForStage("lesson");
+  const lessonProblem = lessonProvider === "anthropic" ? null : credentialProblem(lessonProvider);
+  if (lessonProblem) warnings.push(`Lessons run on ${lessonProvider} but ${lessonProblem}: lesson generation will fail.`);
 
   const solver = solverConfig();
   if (solver.enabled && !isPriced("anthropic", solver.model)) warnings.push(`Solver model ${solver.model} has no price row in pricing.ts.`);
@@ -48,7 +55,10 @@ export function checkGenerationConfig(): CheckReport {
       continue;
     }
     if (pipeline === "legacy") {
-      lines.push(`${tier}: legacy pipeline (provider ${providerForStage(tier)})`);
+      const provider = providerForStage(tier);
+      lines.push(`${tier}: legacy pipeline (provider ${provider})`);
+      const problem = provider === "anthropic" ? null : credentialProblem(provider);
+      if (problem) errors.push(`${tier}: ${problem}.`);
       continue;
     }
     let ladder: RungConfig[];

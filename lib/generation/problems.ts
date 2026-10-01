@@ -30,7 +30,8 @@ import { sketchSeeds } from "@/lib/generation/seed-sketch";
 import { auditSketch } from "@/lib/generation/verifier-model";
 import { planFor, type GenerationPlan } from "@/lib/generation/plan";
 import { solveProblem } from "@/lib/generation/solve";
-import { solverConfig, SOLVER_CLIENT_TIMEOUT_MS, providerForStage, geminiModelFor, anthropicModelFor, envOr, pipelineFor, type Pipeline } from "@/lib/generation/config";
+import { solverConfig, SOLVER_CLIENT_TIMEOUT_MS, providerForStage, stageModel, anthropicModelFor, envOr, pipelineFor, type GenerationProvider, type Pipeline } from "@/lib/generation/config";
+import { callOpenWeightWithRetry } from "@/lib/generation/openweight-stage";
 import { generateProblemsCascade } from "@/lib/generation/cascade/generate";
 import { callGeminiWithRetry, geminiClient } from "@/lib/generation/gemini-call";
 import type { RecentMemory } from "@/lib/generation/recent-problems";
@@ -55,6 +56,11 @@ import type { Anchor, Problem } from "@/lib/types";
 // duplicated system-block input. The HARD tier (AIME #13–15 variants) thinks far
 // more per problem and overran a 4-wide chunk, so it chunks 2-wide.
 const SONNET_CHUNK = 4;
+
+// One open-weight generation call (a whole easy set, or one mid chunk) is a long
+// non-streaming reply. Bounded below the route's 300s limit; the retry loop's own
+// time-budget guard decides whether another attempt still fits.
+const OPENWEIGHT_GENERATION_TIMEOUT_MS = 240_000;
 
 export type ProblemsGenInput = {
   client: Anthropic;
@@ -83,7 +89,7 @@ export type ProblemsGenResult =
 function stageUsage(
   accountant: UsageAccountant,
   stage: Parameters<UsageAccountant["totals"]>[0],
-  provider: "anthropic" | "gemini",
+  provider: GenerationProvider,
   model: string
 ): StageUsage | null {
   return accountant.asStageUsage(stage, provider, model);
@@ -207,17 +213,19 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
   // tier-specific vars. GENERATION_MODEL_HARD/MID/EASY are optional per-tier overrides.
   // Defaults: hard → Opus 5    (the reasoning-critical tier: adaptive thinking,
   //             variant seeds, AIME #10–15, or a non-contest student's hardest work);
-  //           mid  → Gemini Flash (adaptive thinking, scratch);
-  //           easy → Gemini Flash (no thinking, scratch).
+  //           mid  → open-weight (thinking on, scratch);
+  //           easy → open-weight (no thinking, scratch).
   // Which vendor writes THIS tier's problem statements — per-stage (lib/generation/
   // config.ts): the hard tier defaults to Anthropic Opus, every other tier defaults
-  // to Gemini. The solver (solve.ts) is never touched by this: it always stays on
-  // Anthropic regardless.
+  // to the open-weight host (Gemini only when GENERATION_PROVIDER forces it). The
+  // solver (solve.ts) is never touched by this: it always stays on Anthropic regardless.
   const tierProvider = providerForStage(tier);
   const useGemini = tierProvider === "gemini";
+  const useOpenWeight = tierProvider === "openweight";
   const model = anthropicModelFor(tier);
-  const geminiTierModel = geminiModelFor(tier);
-  console.log(`[/api/generate] model=${useGemini ? geminiTierModel : model} provider=${tierProvider} tier=${tier}`);
+  // The model that actually writes this tier (the hosted provider's, else Anthropic's).
+  const tierModel = stageModel(tier, model);
+  console.log(`[/api/generate] model=${tierModel} provider=${tierProvider} tier=${tier}`);
   const seedSketchProvider = providerForStage("seedSketch");
   const expandProvider = providerForStage("expand");
 
@@ -346,11 +354,29 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
     const settled = await Promise.allSettled(
       chunks.map((chunkSize, ci) => {
         const cb = build({ count: chunkSize, anchors: chunkSeeds[ci], avoid, chunkIndex: ci });
+        if (useOpenWeight) {
+          const cfg = sonnetChunkConfig(chunkSize, effortOverride);
+          return callOpenWeightWithRetry(
+            tierModel,
+            cb.system,
+            cb.user,
+            {
+              functionName: cfg.tool.name,
+              functionDescription: cfg.tool.description ?? "",
+              parametersJsonSchema: cfg.tool.input_schema,
+              maxOutputTokens: cfg.maxTokens,
+              thinking: cfg.effort ?? "medium",
+              timeoutMs: OPENWEIGHT_GENERATION_TIMEOUT_MS,
+            },
+            cfg.validate,
+            recordGen
+          );
+        }
         if (useGemini) {
           const cfg = sonnetChunkConfig(chunkSize, effortOverride);
           return callGeminiWithRetry(
             geminiClient(),
-            geminiTierModel,
+            tierModel,
             cb.system,
             cb.user,
             {
@@ -430,9 +456,9 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
       accountant,
       "plan",
       planProvider,
-      planProvider === "gemini" ? geminiModelFor("plan") : anthropicModelFor("plan")
+      stageModel("plan", anthropicModelFor("plan"))
     );
-  const generationUsage = () => stageUsage(accountant, "generation", tierProvider, useGemini ? geminiTierModel : model);
+  const generationUsage = () => stageUsage(accountant, "generation", tierProvider, tierModel);
   const failMeta = () =>
     buildMeta({
       planSource: plan.source,
@@ -462,10 +488,27 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
         batch = await generateSonnet(ask, attemptAvoid);
       } else {
         const b = build({ count: ask, anchors: seedPool, avoid: attemptAvoid });
-        if (useGemini) {
+        if (useOpenWeight) {
+          // Thinking off, forced tool: the same shape as the Anthropic easy tier.
+          batch = await callOpenWeightWithRetry(
+            tierModel,
+            b.system,
+            b.user,
+            {
+              functionName: easyConfig.tool.name,
+              functionDescription: easyConfig.tool.description ?? "",
+              parametersJsonSchema: easyConfig.tool.input_schema,
+              maxOutputTokens: easyConfig.maxTokens,
+              thinking: "off",
+              timeoutMs: OPENWEIGHT_GENERATION_TIMEOUT_MS,
+            },
+            easyConfig.validate,
+            recordGen
+          );
+        } else if (useGemini) {
           batch = await callGeminiWithRetry(
             geminiClient(),
-            geminiTierModel,
+            tierModel,
             b.system,
             b.user,
             {
@@ -793,7 +836,7 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
             accountant,
             "seed-sketch",
             seedSketchProvider,
-            seedSketchProvider === "gemini" ? geminiModelFor("seedSketch") : expandModel
+            stageModel("seedSketch", expandModel)
           ) ?? undefined,
         generation: generationUsage() ?? undefined,
         solve: stageUsage(accountant, "solve", "anthropic", solverCfgFinal.model) ?? undefined,
@@ -803,7 +846,7 @@ export async function generateProblems(input: ProblemsGenInput): Promise<Problem
             accountant,
             "expansion",
             expandProvider,
-            expandProvider === "gemini" ? geminiModelFor("expand") : expandModel
+            stageModel("expand", expandModel)
           ) ?? undefined,
       },
       verdicts,

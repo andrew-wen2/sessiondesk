@@ -22,7 +22,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { calibrationFor, categoryFor, tierFor, type Competition } from "@/lib/calibration";
 import { RUBRICS, buildPlanPrompt } from "@/lib/generation-prompt";
 import { callGeminiWithRetry, geminiClient } from "@/lib/generation/gemini-call";
-import { providerForStage, geminiModelFor, anthropicModelFor } from "@/lib/generation/config";
+import { callOpenWeightWithRetry } from "@/lib/generation/openweight-stage";
+import { providerForStage, geminiModelFor, anthropicModelFor, openweightModelFor } from "@/lib/generation/config";
 
 // Drives rendering hints and which similarity axes apply — a shared integer means
 // something in two math problems and nothing in two Spanish exercises.
@@ -224,7 +225,23 @@ export async function planFor(args: {
 
   try {
     let raw: Record<string, unknown>;
-    if (providerForStage("plan") === "gemini") {
+    const provider = providerForStage("plan");
+    if (provider === "openweight") {
+      raw = await callOpenWeightWithRetry(
+        openweightModelFor("plan"),
+        system,
+        user,
+        {
+          functionName: "emit_plan",
+          functionDescription: "Return the generation plan for this tutoring session.",
+          parametersJsonSchema: PLAN_TOOL.input_schema,
+          maxOutputTokens: 1500,
+          thinking: "off",
+        },
+        (r) => r as Record<string, unknown>,
+        recordUsage
+      );
+    } else if (provider === "gemini") {
       raw = await callGeminiWithRetry(
         geminiClient(),
         geminiModelFor("plan"),

@@ -1,5 +1,16 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { anthropicModelFor, envOr, geminiModelFor, pipelineFor, PipelineConfigError, solverConfig } from "./config";
+import {
+  anthropicModelFor,
+  envOr,
+  geminiModelFor,
+  openweightModelFor,
+  OPENWEIGHT_STAGE_MODEL,
+  pipelineFor,
+  PipelineConfigError,
+  providerForStage,
+  solverConfig,
+  stageModel,
+} from "./config";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -69,6 +80,53 @@ describe("override precedence is unchanged", () => {
     expect(geminiModelFor("easy")).toBe("stage");
     vi.stubEnv("GEMINI_MODEL", "global");
     expect(geminiModelFor("easy")).toBe("global");
+  });
+});
+
+describe("providerForStage", () => {
+  it("defaults to open-weight for every stage but the hard tier, never Gemini", () => {
+    vi.stubEnv("GENERATION_PROVIDER", "");
+    expect(providerForStage("hard")).toBe("anthropic");
+    for (const stage of ["plan", "easy", "mid", "expand", "seedSketch", "lesson"] as const) {
+      expect(providerForStage(stage)).toBe("openweight");
+    }
+  });
+
+  it("GENERATION_PROVIDER forces every stage to one vendor; an unknown value is ignored", () => {
+    for (const forced of ["anthropic", "gemini", "openweight"] as const) {
+      vi.stubEnv("GENERATION_PROVIDER", forced);
+      expect(providerForStage("hard")).toBe(forced);
+      expect(providerForStage("plan")).toBe(forced);
+    }
+    vi.stubEnv("GENERATION_PROVIDER", "nope");
+    expect(providerForStage("plan")).toBe("openweight");
+  });
+});
+
+describe("open-weight stage models", () => {
+  it("blank overrides resolve to the default", () => {
+    vi.stubEnv("OPENWEIGHT_MODEL", "");
+    vi.stubEnv("OPENWEIGHT_MODEL_LESSON", "");
+    expect(openweightModelFor("lesson")).toBe(OPENWEIGHT_STAGE_MODEL);
+  });
+
+  it("OPENWEIGHT_MODEL wins over the stage var; seed-sketch reuses the expand var", () => {
+    vi.stubEnv("OPENWEIGHT_MODEL_EXPAND", "stage");
+    expect(openweightModelFor("seedSketch")).toBe("stage");
+    vi.stubEnv("OPENWEIGHT_MODEL", "global");
+    expect(openweightModelFor("expand")).toBe("global");
+  });
+
+  it("stageModel names the model of whichever provider serves the stage", () => {
+    vi.stubEnv("GENERATION_PROVIDER", "");
+    vi.stubEnv("OPENWEIGHT_MODEL", "");
+    vi.stubEnv("OPENWEIGHT_MODEL_PLAN", "");
+    expect(stageModel("plan", "claude-haiku-4-5")).toBe(OPENWEIGHT_STAGE_MODEL);
+    expect(stageModel("hard", "claude-opus-5")).toBe("claude-opus-5");
+    vi.stubEnv("GENERATION_PROVIDER", "gemini");
+    vi.stubEnv("GEMINI_MODEL", "");
+    vi.stubEnv("GEMINI_MODEL_PLAN", "");
+    expect(stageModel("plan", "claude-haiku-4-5")).toBe("gemini-3.8-flash");
   });
 });
 

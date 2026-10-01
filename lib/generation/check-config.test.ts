@@ -47,9 +47,44 @@ describe("checkGenerationConfig", () => {
     expect(checkGenerationConfig().errors.join(" ")).toMatch(/cheaper rungs can never start/);
   });
 
-  it("warns when the plan stage needs a Gemini key that is missing", () => {
+  it("warns when the plan stage and lessons need open-weight credentials that are missing", () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "k");
+    vi.stubEnv("GENERATION_PROVIDER", "");
+    vi.stubEnv("GENERATION_PIPELINE", "cascade");
+    vi.stubEnv("OPENWEIGHT_API_KEY", "");
+    vi.stubEnv("OPENWEIGHT_BASE_URL", "");
+    const warnings = checkGenerationConfig().warnings.join(" ");
+    expect(warnings).toMatch(/plan stage runs on openweight but OPENWEIGHT_API_KEY/);
+    expect(warnings).toMatch(/Lessons run on openweight/);
+  });
+
+  it("needs no Gemini key by default", () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "k");
+    vi.stubEnv("GENERATION_PROVIDER", "");
+    vi.stubEnv("GOOGLE_API_KEY", "");
+    vi.stubEnv("OPENWEIGHT_API_KEY", "o");
+    vi.stubEnv("OPENWEIGHT_BASE_URL", "https://api.example/v1");
+    const report = checkGenerationConfig();
+    expect(report.errors).toEqual([]);
+    expect(report.warnings).toEqual([]);
+  });
+
+  it("still warns about a Gemini key when Gemini is forced", () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "k");
+    vi.stubEnv("GENERATION_PROVIDER", "gemini");
+    vi.stubEnv("GENERATION_PIPELINE", "cascade");
     vi.stubEnv("GOOGLE_API_KEY", "");
     expect(checkGenerationConfig().warnings.join(" ")).toMatch(/GOOGLE_API_KEY/);
+  });
+
+  it("fails a legacy tier whose open-weight host is not configured", () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "k");
+    vi.stubEnv("GENERATION_PROVIDER", "");
+    vi.stubEnv("GENERATION_PIPELINE", "");
+    vi.stubEnv("OPENWEIGHT_API_KEY", "");
+    vi.stubEnv("OPENWEIGHT_BASE_URL", "");
+    const errs = checkGenerationConfig().errors;
+    expect(errs.join(" ")).toMatch(/easy: OPENWEIGHT_API_KEY/);
+    expect(errs.some((e) => e.startsWith("hard:"))).toBe(false); // hard stays on Anthropic
   });
 });

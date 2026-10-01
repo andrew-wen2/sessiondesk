@@ -9,7 +9,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { SeedItem } from "@/lib/generation-prompt";
 import { callGeminiWithRetry, geminiClient } from "@/lib/generation/gemini-call";
-import { providerForStage, geminiModelFor } from "@/lib/generation/config";
+import { callOpenWeightWithRetry } from "@/lib/generation/openweight-stage";
+import { providerForStage, geminiModelFor, openweightModelFor } from "@/lib/generation/config";
 
 // Shared by both providers: the tool/function always returns {sketches:[{index,sketch}]},
 // keyed by the model's own echoed index (see SEED_SKETCH_TOOL's comment).
@@ -66,7 +67,24 @@ export async function sketchSeeds(
   const { system, user } = build(items);
   try {
     let byIndex: Map<number, string>;
-    if (providerForStage("seedSketch") === "gemini") {
+    const provider = providerForStage("seedSketch");
+    if (provider === "openweight") {
+      byIndex = await callOpenWeightWithRetry(
+        openweightModelFor("seedSketch"),
+        system,
+        user,
+        {
+          functionName: "emit_seed_sketches",
+          functionDescription: SEED_SKETCH_TOOL.description ?? "",
+          parametersJsonSchema: SEED_SKETCH_TOOL.input_schema,
+          maxOutputTokens: Math.min(12000, 1000 + items.length * 700),
+          thinking: "off",
+          timeoutMs: 120_000,
+        },
+        sketchesByIndex,
+        recordUsage
+      );
+    } else if (provider === "gemini") {
       byIndex = await callGeminiWithRetry(
         geminiClient(),
         geminiModelFor("seedSketch"),

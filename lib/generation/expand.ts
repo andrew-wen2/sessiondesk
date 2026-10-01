@@ -8,7 +8,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { SketchItem } from "@/lib/generation-prompt";
 import { callGeminiWithRetry, geminiClient } from "@/lib/generation/gemini-call";
-import { providerForStage, geminiModelFor } from "@/lib/generation/config";
+import { callOpenWeightWithRetry } from "@/lib/generation/openweight-stage";
+import { providerForStage, geminiModelFor, openweightModelFor } from "@/lib/generation/config";
 
 function solutionsByIndex(raw: unknown): Map<number, string> {
   const out = Array.isArray((raw as { solutions?: unknown })?.solutions) ? (raw as { solutions: unknown[] }).solutions : [];
@@ -60,7 +61,24 @@ export async function expandSolutions(
   const maxOutputTokens = Math.min(16000, 1500 + items.length * 1400);
   try {
     let byIndex: Map<number, string>;
-    if (providerForStage("expand") === "gemini") {
+    const provider = providerForStage("expand");
+    if (provider === "openweight") {
+      byIndex = await callOpenWeightWithRetry(
+        openweightModelFor("expand"),
+        system,
+        user,
+        {
+          functionName: "emit_solutions",
+          functionDescription: SOLUTIONS_TOOL.description ?? "",
+          parametersJsonSchema: SOLUTIONS_TOOL.input_schema,
+          maxOutputTokens,
+          thinking: "off",
+          timeoutMs: 120_000,
+        },
+        solutionsByIndex,
+        recordUsage
+      );
+    } else if (provider === "gemini") {
       byIndex = await callGeminiWithRetry(
         geminiClient(),
         geminiModelFor("expand"),
